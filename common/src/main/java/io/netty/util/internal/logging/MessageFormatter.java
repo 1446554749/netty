@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -108,7 +108,7 @@ import java.util.Set;
  * {@link #format(String, Object, Object)} and
  * {@link #arrayFormat(String, Object[])} methods for more details.
  */
-final class MessageFormatter {
+public final class MessageFormatter {
     private static final String DELIM_STR = "{}";
     private static final char ESCAPE_CHAR = '\\';
 

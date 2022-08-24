@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ * https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -15,6 +15,8 @@
  */
 package io.netty.handler.traffic;
 
+import static io.netty.util.internal.ObjectUtil.checkPositive;
+
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufHolder;
 import io.netty.channel.Channel;
@@ -23,6 +25,7 @@ import io.netty.channel.ChannelConfig;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelOutboundBuffer;
 import io.netty.channel.ChannelPromise;
+import io.netty.channel.FileRegion;
 import io.netty.util.Attribute;
 import io.netty.util.AttributeKey;
 import io.netty.util.internal.logging.InternalLogger;
@@ -67,7 +70,7 @@ public abstract class AbstractTrafficShapingHandler extends ChannelDuplexHandler
     static final long DEFAULT_MAX_SIZE = 4 * 1024 * 1024L;
 
     /**
-     * Default minimal time to wait
+     * Default minimal time to wait: 10ms
      */
     static final long MINIMAL_WAIT = 10;
 
@@ -163,15 +166,12 @@ public abstract class AbstractTrafficShapingHandler extends ChannelDuplexHandler
      *            Must be positive.
      */
     protected AbstractTrafficShapingHandler(long writeLimit, long readLimit, long checkInterval, long maxTime) {
-        if (maxTime <= 0) {
-            throw new IllegalArgumentException("maxTime must be positive");
-        }
+        this.maxTime = checkPositive(maxTime, "maxTime");
 
         userDefinedWritabilityIndex = userDefinedWritabilityIndex();
         this.writeLimit = writeLimit;
         this.readLimit = readLimit;
         this.checkInterval = checkInterval;
-        this.maxTime = maxTime;
     }
 
     /**
@@ -345,10 +345,7 @@ public abstract class AbstractTrafficShapingHandler extends ChannelDuplexHandler
      *            Must be positive.
      */
     public void setMaxTimeWait(long maxTime) {
-        if (maxTime <= 0) {
-            throw new IllegalArgumentException("maxTime must be positive");
-        }
-        this.maxTime = maxTime;
+        this.maxTime = checkPositive(maxTime, "maxTime");
     }
 
     /**
@@ -376,10 +373,7 @@ public abstract class AbstractTrafficShapingHandler extends ChannelDuplexHandler
      *              Must be positive.
      */
     public void setMaxWriteDelay(long maxWriteDelay) {
-        if (maxWriteDelay <= 0) {
-            throw new IllegalArgumentException("maxWriteDelay must be positive");
-        }
-        this.maxWriteDelay = maxWriteDelay;
+        this.maxWriteDelay = checkPositive(maxWriteDelay, "maxWriteDelay");
     }
 
     /**
@@ -512,6 +506,16 @@ public abstract class AbstractTrafficShapingHandler extends ChannelDuplexHandler
         ctx.fireChannelRead(msg);
     }
 
+    @Override
+    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
+        Channel channel = ctx.channel();
+        if (channel.hasAttr(REOPEN_TASK)) {
+            //release the reopen task
+            channel.attr(REOPEN_TASK).set(null);
+        }
+        super.handlerRemoved(ctx);
+    }
+
     /**
      * Method overridden in GTSH to take into account specific timer for the channel.
      * @param wait the wait delay computed in ms
@@ -634,7 +638,8 @@ public abstract class AbstractTrafficShapingHandler extends ChannelDuplexHandler
     /**
      * Calculate the size of the given {@link Object}.
      *
-     * This implementation supports {@link ByteBuf} and {@link ByteBufHolder}. Sub-classes may override this.
+     * This implementation supports {@link ByteBuf}, {@link ByteBufHolder} and {@link FileRegion}.
+     * Sub-classes may override this.
      * @param msg the msg for which the size should be calculated.
      * @return size the size of the msg or {@code -1} if unknown.
      */
@@ -644,6 +649,9 @@ public abstract class AbstractTrafficShapingHandler extends ChannelDuplexHandler
         }
         if (msg instanceof ByteBufHolder) {
             return ((ByteBufHolder) msg).content().readableBytes();
+        }
+        if (msg instanceof FileRegion) {
+            return ((FileRegion) msg).count();
         }
         return -1;
     }

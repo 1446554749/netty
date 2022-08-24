@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -43,7 +43,7 @@ public class Http2MultiplexCodecBuilder
     }
 
     private static ChannelHandler checkSharable(ChannelHandler handler) {
-        if ((handler instanceof ChannelHandlerAdapter && !((ChannelHandlerAdapter) handler).isSharable()) &&
+        if (handler instanceof ChannelHandlerAdapter && !((ChannelHandlerAdapter) handler).isSharable() &&
                 !handler.getClass().isAnnotationPresent(ChannelHandler.Sharable.class)) {
             throw new IllegalArgumentException("The handler must be Sharable");
         }
@@ -57,7 +57,7 @@ public class Http2MultiplexCodecBuilder
     }
 
     /**
-     * Creates a builder for a HTTP/2 client.
+     * Creates a builder for an HTTP/2 client.
      *
      * @param childHandler the handler added to channels for remotely-created streams. It must be
      *     {@link ChannelHandler.Sharable}.
@@ -67,7 +67,7 @@ public class Http2MultiplexCodecBuilder
     }
 
     /**
-     * Creates a builder for a HTTP/2 server.
+     * Creates a builder for an HTTP/2 server.
      *
      * @param childHandler the handler added to channels for remotely-created streams. It must be
      *     {@link ChannelHandler.Sharable}.
@@ -77,7 +77,7 @@ public class Http2MultiplexCodecBuilder
     }
 
     public Http2MultiplexCodecBuilder withUpgradeStreamHandler(ChannelHandler upgradeStreamHandler) {
-        if (this.isServer()) {
+        if (isServer()) {
             throw new IllegalArgumentException("Server codecs don't use an extra handler for the upgrade stream");
         }
         this.upgradeStreamHandler = upgradeStreamHandler;
@@ -197,6 +197,11 @@ public class Http2MultiplexCodecBuilder
     }
 
     @Override
+    public Http2MultiplexCodecBuilder flushPreface(boolean flushPreface) {
+        return super.flushPreface(flushPreface);
+    }
+
+    @Override
     public int decoderEnforceMaxConsecutiveEmptyDataFrames() {
         return super.decoderEnforceMaxConsecutiveEmptyDataFrames();
     }
@@ -215,8 +220,8 @@ public class Http2MultiplexCodecBuilder
             DefaultHttp2Connection connection = new DefaultHttp2Connection(isServer(), maxReservedStreams());
             Long maxHeaderListSize = initialSettings().maxHeaderListSize();
             Http2FrameReader frameReader = new DefaultHttp2FrameReader(maxHeaderListSize == null ?
-                    new DefaultHttp2HeadersDecoder(true) :
-                    new DefaultHttp2HeadersDecoder(true, maxHeaderListSize));
+                    new DefaultHttp2HeadersDecoder(isValidateHeaders()) :
+                    new DefaultHttp2HeadersDecoder(isValidateHeaders(), maxHeaderListSize));
 
             if (frameLogger() != null) {
                 frameWriter = new Http2OutboundFrameLogger(frameWriter, frameLogger());
@@ -243,7 +248,7 @@ public class Http2MultiplexCodecBuilder
     protected Http2MultiplexCodec build(
             Http2ConnectionDecoder decoder, Http2ConnectionEncoder encoder, Http2Settings initialSettings) {
         Http2MultiplexCodec codec = new Http2MultiplexCodec(encoder, decoder, initialSettings, childHandler,
-                upgradeStreamHandler, decoupleCloseAndGoAway());
+                upgradeStreamHandler, decoupleCloseAndGoAway(), flushPreface());
         codec.gracefulShutdownTimeoutMillis(gracefulShutdownTimeoutMillis());
         return codec;
     }

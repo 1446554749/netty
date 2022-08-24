@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -24,6 +24,7 @@ import io.netty.handler.codec.socksx.SocksVersion;
 import io.netty.handler.codec.socksx.v4.Socks4ServerDecoder.State;
 import io.netty.util.CharsetUtil;
 import io.netty.util.NetUtil;
+import io.netty.util.internal.UnstableApi;
 
 import java.util.List;
 
@@ -37,7 +38,8 @@ public class Socks4ServerDecoder extends ReplayingDecoder<State> {
 
     private static final int MAX_FIELD_LENGTH = 255;
 
-    enum State {
+    @UnstableApi
+    public enum State {
         START,
         READ_USERID,
         READ_DOMAIN,

@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -102,8 +102,8 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
                         Http2ConnectionDecoder decoder,
                         Http2Settings initialSettings,
                         ChannelHandler inboundStreamHandler,
-                        ChannelHandler upgradeStreamHandler, boolean decoupleCloseAndGoAway) {
-        super(encoder, decoder, initialSettings, decoupleCloseAndGoAway);
+                        ChannelHandler upgradeStreamHandler, boolean decoupleCloseAndGoAway, boolean flushPreface) {
+        super(encoder, decoder, initialSettings, decoupleCloseAndGoAway, flushPreface);
         this.inboundStreamHandler = inboundStreamHandler;
         this.upgradeStreamHandler = upgradeStreamHandler;
     }
@@ -213,6 +213,11 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
     }
 
     private void onHttp2GoAwayFrame(ChannelHandlerContext ctx, final Http2GoAwayFrame goAwayFrame) {
+        if (goAwayFrame.lastStreamId() == Integer.MAX_VALUE) {
+            // None of the streams can have an id greater than Integer.MAX_VALUE
+            return;
+        }
+        // Notify which streams were not processed by the remote peer and are safe to retry on another connection:
         try {
             forEachActiveStream(new Http2FrameStreamVisitor() {
                 @Override
@@ -275,7 +280,7 @@ public class Http2MultiplexCodec extends Http2FrameCodec {
             forEachActiveStream(AbstractHttp2StreamChannel.WRITABLE_VISITOR);
         }
 
-        ctx.fireChannelWritabilityChanged();
+        super.channelWritabilityChanged(ctx);
     }
 
     final void flush0(ChannelHandlerContext ctx) {

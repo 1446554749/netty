@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -16,23 +16,31 @@
 
 package io.netty.util.concurrent;
 
+import io.netty.util.internal.InternalThreadLocalMap;
 import io.netty.util.internal.ObjectCleaner;
-import org.junit.Before;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
+import java.lang.reflect.Field;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.nullValue;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class FastThreadLocalTest {
-    @Before
+    @BeforeEach
     public void setUp() {
         FastThreadLocal.removeAll();
         assertThat(FastThreadLocal.size(), is(0));
@@ -55,7 +63,8 @@ public class FastThreadLocalTest {
         assertNull(threadLocal.getIfExists());
     }
 
-    @Test(timeout = 10000)
+    @Test
+    @Timeout(value = 10000, unit = TimeUnit.MILLISECONDS)
     public void testRemoveAll() throws Exception {
         final AtomicBoolean removed = new AtomicBoolean();
         final FastThreadLocal<Boolean> var = new FastThreadLocal<Boolean>() {
@@ -75,7 +84,8 @@ public class FastThreadLocalTest {
         assertThat(FastThreadLocal.size(), is(0));
     }
 
-    @Test(timeout = 10000)
+    @Test
+    @Timeout(value = 10000, unit = TimeUnit.MILLISECONDS)
     public void testRemoveAllFromFTLThread() throws Throwable {
         final AtomicReference<Throwable> throwable = new AtomicReference<Throwable>();
         final Thread thread = new FastThreadLocalThread() {
@@ -157,24 +167,28 @@ public class FastThreadLocalTest {
         assertEquals(0, ObjectCleaner.getLiveSetCount() - sizeWhenStart);
     }
 
-    @Test(timeout = 4000)
+    @Test
+    @Timeout(value = 4000, unit = TimeUnit.MILLISECONDS)
     public void testOnRemoveCalledForFastThreadLocalGet() throws Exception {
         testOnRemoveCalled(true, true);
     }
 
-    @Ignore("onRemoval(...) not called with non FastThreadLocal")
-    @Test(timeout = 4000)
+    @Disabled("onRemoval(...) not called with non FastThreadLocal")
+    @Test
+    @Timeout(value = 4000, unit = TimeUnit.MILLISECONDS)
     public void testOnRemoveCalledForNonFastThreadLocalGet() throws Exception {
         testOnRemoveCalled(false, true);
     }
 
-    @Test(timeout = 4000)
+    @Test
+    @Timeout(value = 4000, unit = TimeUnit.MILLISECONDS)
     public void testOnRemoveCalledForFastThreadLocalSet() throws Exception {
         testOnRemoveCalled(true, false);
     }
 
-    @Ignore("onRemoval(...) not called with non FastThreadLocal")
-    @Test(timeout = 4000)
+    @Disabled("onRemoval(...) not called with non FastThreadLocal")
+    @Test
+    @Timeout(value = 4000, unit = TimeUnit.MILLISECONDS)
     public void testOnRemoveCalledForNonFastThreadLocalSet() throws Exception {
         testOnRemoveCalled(false, false);
     }
@@ -229,5 +243,59 @@ public class FastThreadLocalTest {
         protected void onRemoval(String value) throws Exception {
             onRemovalCalled.set(value);
         }
+    }
+
+    @Test
+    public void testConstructionWithIndex() throws Exception {
+        int ARRAY_LIST_CAPACITY_MAX_SIZE = Integer.MAX_VALUE - 8;
+        Field nextIndexField =
+                InternalThreadLocalMap.class.getDeclaredField("nextIndex");
+        nextIndexField.setAccessible(true);
+        AtomicInteger nextIndex = (AtomicInteger) nextIndexField.get(AtomicInteger.class);
+        int nextIndex_before = nextIndex.get();
+        try {
+            while (nextIndex.get() < ARRAY_LIST_CAPACITY_MAX_SIZE) {
+                new FastThreadLocal<Boolean>();
+            }
+            assertEquals(ARRAY_LIST_CAPACITY_MAX_SIZE - 1, InternalThreadLocalMap.lastVariableIndex());
+            try {
+                new FastThreadLocal<Boolean>();
+            } catch (Throwable t) {
+                // assert the max index cannot greater than (ARRAY_LIST_CAPACITY_MAX_SIZE - 1)
+                assertThat(t, is(instanceOf(IllegalStateException.class)));
+            }
+            // assert the index was reset to ARRAY_LIST_CAPACITY_MAX_SIZE after it reaches ARRAY_LIST_CAPACITY_MAX_SIZE
+            assertEquals(ARRAY_LIST_CAPACITY_MAX_SIZE - 1, InternalThreadLocalMap.lastVariableIndex());
+        } finally {
+            // restore the index
+            nextIndex.set(nextIndex_before);
+        }
+    }
+
+    @EnabledIfEnvironmentVariable(named = "CI", matches = "true", disabledReason = "" +
+            "This deliberately causes OutOfMemoryErrors, for which heap dumps are automatically generated. " +
+            "To avoid confusion, wasted time investigating heap dumps, and to avoid heap dumps accidentally " +
+            "getting committed to the Git repository, we should only enable this test when running in a CI " +
+            "environment. We make this check by assuming a 'CI' environment variable. " +
+            "This matches what Github Actions is doing for us currently.")
+    @Test
+    public void testInternalThreadLocalMapExpand() throws Exception {
+        final AtomicReference<Throwable> throwable = new AtomicReference<Throwable>();
+        Runnable runnable = new Runnable() {
+            @Override
+            public void run() {
+                int expand_threshold = 1 << 30;
+                try {
+                    InternalThreadLocalMap.get().setIndexedVariable(expand_threshold, null);
+                } catch (Throwable t) {
+                    throwable.set(t);
+                }
+            }
+        };
+        FastThreadLocalThread fastThreadLocalThread = new FastThreadLocalThread(runnable);
+        fastThreadLocalThread.start();
+        fastThreadLocalThread.join();
+        // assert the expanded size is not overflowed to negative value
+        assertThat(throwable.get(), is(not(instanceOf(NegativeArraySizeException.class))));
     }
 }

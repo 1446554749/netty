@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -24,26 +24,32 @@ import io.netty.handler.codec.http.DefaultFullHttpRequest;
 import io.netty.handler.codec.http.DefaultHttpContent;
 import io.netty.handler.codec.http.DefaultHttpRequest;
 import io.netty.handler.codec.http.DefaultLastHttpContent;
-import io.netty.handler.codec.http.HttpContent;
+import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.codec.http.LastHttpContent;
 import io.netty.util.CharsetUtil;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 
+import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.nio.charset.UnsupportedCharsetException;
 import java.util.Arrays;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
-/** {@link HttpPostRequestDecoder} test case. */
+/**
+ * {@link HttpPostRequestDecoder} test case.
+ */
 public class HttpPostRequestDecoderTest {
 
     @Test
@@ -78,16 +84,17 @@ public class HttpPostRequestDecoderTest {
         for (String data : Arrays.asList("", "\r", "\r\r", "\r\r\r")) {
             final String body =
                     "--" + boundary + "\r\n" +
-                    "Content-Disposition: form-data; name=\"file\"; filename=\"tmp-0.txt\"\r\n" +
-                    "Content-Type: image/gif\r\n" +
-                    "\r\n" +
-                    data + "\r\n" +
-                    "--" + boundary + "--\r\n";
+                            "Content-Disposition: form-data; name=\"file\"; filename=\"tmp-0.txt\"\r\n" +
+                            "Content-Type: image/gif\r\n" +
+                            "\r\n" +
+                            data + "\r\n" +
+                            "--" + boundary + "--\r\n";
 
             // Create decoder instance to test.
             final HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(inMemoryFactory, req);
 
-            decoder.offer(new DefaultHttpContent(Unpooled.copiedBuffer(body, CharsetUtil.UTF_8)));
+            ByteBuf buf = Unpooled.copiedBuffer(body, CharsetUtil.UTF_8);
+            decoder.offer(new DefaultHttpContent(buf));
             decoder.offer(new DefaultHttpContent(Unpooled.EMPTY_BUFFER));
 
             // Validate it's enough chunks to decode upload.
@@ -97,10 +104,11 @@ public class HttpPostRequestDecoderTest {
             MemoryFileUpload upload = (MemoryFileUpload) decoder.next();
 
             // Validate data has been parsed correctly as it was passed into request.
-            assertEquals("Invalid decoded data [data=" + data.replaceAll("\r", "\\\\r") + ", upload=" + upload + ']',
-                data, upload.getString(CharsetUtil.UTF_8));
+            assertEquals(data, upload.getString(CharsetUtil.UTF_8),
+                    "Invalid decoded data [data=" + data.replaceAll("\r", "\\\\r") + ", upload=" + upload + ']');
             upload.release();
             decoder.destroy();
+            buf.release();
         }
     }
 
@@ -134,6 +142,7 @@ public class HttpPostRequestDecoderTest {
         final HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(inMemoryFactory, req);
         assertFalse(decoder.getBodyHttpDatas().isEmpty());
         decoder.destroy();
+        assertTrue(req.release());
     }
 
     // See https://github.com/netty/netty/issues/2544
@@ -180,6 +189,7 @@ public class HttpPostRequestDecoderTest {
             assertEquals(datas[i].getBytes(CharsetUtil.UTF_8).length, datar.length);
 
             decoder.destroy();
+            assertTrue(req.release());
         }
     }
 
@@ -213,6 +223,7 @@ public class HttpPostRequestDecoderTest {
         final HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(inMemoryFactory, req);
         assertFalse(decoder.getBodyHttpDatas().isEmpty());
         decoder.destroy();
+        assertTrue(req.release());
     }
 
     // See https://github.com/netty/netty/issues/1848
@@ -223,28 +234,28 @@ public class HttpPostRequestDecoderTest {
         final DefaultHttpDataFactory aMemFactory = new DefaultHttpDataFactory(false);
 
         DefaultHttpRequest aRequest = new DefaultHttpRequest(HttpVersion.HTTP_1_1,
-                                                             HttpMethod.POST,
-                                                             "http://localhost");
+                HttpMethod.POST,
+                "http://localhost");
         aRequest.headers().set(HttpHeaderNames.CONTENT_TYPE,
-                               "multipart/form-data; boundary=" + boundary);
+                "multipart/form-data; boundary=" + boundary);
         aRequest.headers().set(HttpHeaderNames.TRANSFER_ENCODING,
-                               HttpHeaderValues.CHUNKED);
+                HttpHeaderValues.CHUNKED);
 
         HttpPostRequestDecoder aDecoder = new HttpPostRequestDecoder(aMemFactory, aRequest);
 
         final String aData = "some data would be here. the data should be long enough that it " +
-                             "will be longer than the original buffer length of 256 bytes in " +
-                             "the HttpPostRequestDecoder in order to trigger the issue. Some more " +
-                             "data just to be on the safe side.";
+                "will be longer than the original buffer length of 256 bytes in " +
+                "the HttpPostRequestDecoder in order to trigger the issue. Some more " +
+                "data just to be on the safe side.";
 
         final String body =
                 "--" + boundary + "\r\n" +
-                "Content-Disposition: form-data; name=\"root\"\r\n" +
-                "Content-Type: text/plain\r\n" +
-                "\r\n" +
-                aData +
-                "\r\n" +
-                "--" + boundary + "--\r\n";
+                        "Content-Disposition: form-data; name=\"root\"\r\n" +
+                        "Content-Type: text/plain\r\n" +
+                        "\r\n" +
+                        aData +
+                        "\r\n" +
+                        "--" + boundary + "--\r\n";
 
         byte[] aBytes = body.getBytes();
 
@@ -262,7 +273,7 @@ public class HttpPostRequestDecoderTest {
 
         aDecoder.offer(LastHttpContent.EMPTY_LAST_CONTENT);
 
-        assertTrue("Should have a piece of data", aDecoder.hasNext());
+        assertTrue(aDecoder.hasNext(), "Should have a piece of data");
 
         InterfaceHttpData aDecodedData = aDecoder.next();
         assertEquals(InterfaceHttpData.HttpDataType.Attribute, aDecodedData.getHttpDataType());
@@ -272,12 +283,14 @@ public class HttpPostRequestDecoderTest {
 
         aDecodedData.release();
         aDecoder.destroy();
+        aSmallBuf.release();
+        aLargeBuf.release();
     }
 
     // See https://github.com/netty/netty/issues/2305
     @Test
     public void testChunkCorrect() throws Exception {
-       String payload = "town=794649819&town=784444184&town=794649672&town=794657800&town=" +
+        String payload = "town=794649819&town=784444184&town=794649672&town=794657800&town=" +
                 "794655734&town=794649377&town=794652136&town=789936338&town=789948986&town=" +
                 "789949643&town=786358677&town=794655880&town=786398977&town=789901165&town=" +
                 "789913325&town=789903418&town=789903579&town=794645251&town=794694126&town=" +
@@ -306,26 +319,44 @@ public class HttpPostRequestDecoderTest {
                 "789958999&town=789961555&town=794694050&town=794650241&town=794656286&town=" +
                 "794692081&town=794660090&town=794665227&town=794665136&town=794669931";
         DefaultHttpRequest defaultHttpRequest =
-                    new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/");
+                new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/");
 
         HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(defaultHttpRequest);
 
         int firstChunk = 10;
         int middleChunk = 1024;
 
-        HttpContent part1 = new DefaultHttpContent(Unpooled.wrappedBuffer(
-                payload.substring(0, firstChunk).getBytes()));
-        HttpContent part2 = new DefaultHttpContent(Unpooled.wrappedBuffer(
-                payload.substring(firstChunk, firstChunk + middleChunk).getBytes()));
-        HttpContent part3 = new DefaultHttpContent(Unpooled.wrappedBuffer(
-                payload.substring(firstChunk + middleChunk, firstChunk + middleChunk * 2).getBytes()));
-        HttpContent part4 = new DefaultHttpContent(Unpooled.wrappedBuffer(
-                payload.substring(firstChunk + middleChunk * 2).getBytes()));
+        byte[] payload1 = payload.substring(0, firstChunk).getBytes();
+        byte[] payload2 = payload.substring(firstChunk, firstChunk + middleChunk).getBytes();
+        byte[] payload3 = payload.substring(firstChunk + middleChunk, firstChunk + middleChunk * 2).getBytes();
+        byte[] payload4 = payload.substring(firstChunk + middleChunk * 2).getBytes();
 
-        decoder.offer(part1);
-        decoder.offer(part2);
-        decoder.offer(part3);
-        decoder.offer(part4);
+        ByteBuf buf1 = Unpooled.directBuffer(payload1.length);
+        ByteBuf buf2 = Unpooled.directBuffer(payload2.length);
+        ByteBuf buf3 = Unpooled.directBuffer(payload3.length);
+        ByteBuf buf4 = Unpooled.directBuffer(payload4.length);
+
+        buf1.writeBytes(payload1);
+        buf2.writeBytes(payload2);
+        buf3.writeBytes(payload3);
+        buf4.writeBytes(payload4);
+
+        decoder.offer(new DefaultHttpContent(buf1));
+        decoder.offer(new DefaultHttpContent(buf2));
+        decoder.offer(new DefaultHttpContent(buf3));
+        decoder.offer(new DefaultLastHttpContent(buf4));
+
+        assertFalse(decoder.getBodyHttpDatas().isEmpty());
+        assertEquals(139, decoder.getBodyHttpDatas().size());
+
+        Attribute attr = (Attribute) decoder.getBodyHttpData("town");
+        assertEquals("794649819", attr.getValue());
+
+        decoder.destroy();
+        buf1.release();
+        buf2.release();
+        buf3.release();
+        buf4.release();
     }
 
     // See https://github.com/netty/netty/issues/3326
@@ -352,13 +383,14 @@ public class HttpPostRequestDecoderTest {
         final HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(inMemoryFactory, req);
         assertFalse(decoder.getBodyHttpDatas().isEmpty());
         decoder.destroy();
+        assertTrue(req.release());
     }
 
     @Test
     public void testFilenameContainingSemicolon2() throws Exception {
         final String boundary = "dLV9Wyq26L_-JQxk6ferf-RT153LhOO";
         final DefaultFullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST,
-                                                                      "http://localhost");
+                "http://localhost");
         req.headers().add(HttpHeaderNames.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary);
         // Force to use memory-based data.
         final DefaultHttpDataFactory inMemoryFactory = new DefaultHttpDataFactory(false);
@@ -366,11 +398,11 @@ public class HttpPostRequestDecoderTest {
         final String filename = "tmp;0.txt";
         final String body =
                 "--" + boundary + "\r\n" +
-                "Content-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"\r\n" +
-                "Content-Type: image/gif\r\n" +
-                "\r\n" +
-                data + "\r\n" +
-                "--" + boundary + "--\r\n";
+                        "Content-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"\r\n" +
+                        "Content-Type: image/gif\r\n" +
+                        "\r\n" +
+                        data + "\r\n" +
+                        "--" + boundary + "--\r\n";
 
         req.content().writeBytes(body.getBytes(CharsetUtil.UTF_8.name()));
         // Create decoder instance to test.
@@ -381,6 +413,7 @@ public class HttpPostRequestDecoderTest {
         FileUpload fileUpload = (FileUpload) part1;
         assertEquals("tmp 0.txt", fileUpload.getFilename());
         decoder.destroy();
+        assertTrue(req.release());
     }
 
     @Test
@@ -411,6 +444,7 @@ public class HttpPostRequestDecoderTest {
         final HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(inMemoryFactory, req);
         assertFalse(decoder.getBodyHttpDatas().isEmpty());
         decoder.destroy();
+        assertTrue(req.release());
     }
 
     @Test
@@ -419,50 +453,50 @@ public class HttpPostRequestDecoderTest {
         String filecontent = "123456";
 
         final String body = "--" + boundary + "\r\n" +
-                            "Content-Disposition: form-data; name=\"file\"; filename=" + "\"" + "attached.txt" + "\"" +
-                            "\r\n" +
-                            "Content-Type: application/octet-stream" + "\r\n" +
-                            "Content-Encoding: gzip" + "\r\n" +
-                            "\r\n" +
-                            filecontent +
-                            "\r\n" +
-                            "--" + boundary + "--";
+                "Content-Disposition: form-data; name=\"file\"; filename=" + "\"" + "attached.txt" + "\"" +
+                "\r\n" +
+                "Content-Type: application/octet-stream" + "\r\n" +
+                "Content-Encoding: gzip" + "\r\n" +
+                "\r\n" +
+                filecontent +
+                "\r\n" +
+                "--" + boundary + "--";
 
         final DefaultFullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1,
-                                                                      HttpMethod.POST,
-                                                                      "http://localhost",
-                                                                      Unpooled.wrappedBuffer(body.getBytes()));
+                HttpMethod.POST,
+                "http://localhost",
+                Unpooled.wrappedBuffer(body.getBytes()));
         req.headers().add(HttpHeaderNames.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary);
         req.headers().add(HttpHeaderNames.TRANSFER_ENCODING, HttpHeaderValues.CHUNKED);
         final DefaultHttpDataFactory inMemoryFactory = new DefaultHttpDataFactory(false);
         final HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(inMemoryFactory, req);
         assertFalse(decoder.getBodyHttpDatas().isEmpty());
         InterfaceHttpData part1 = decoder.getBodyHttpDatas().get(0);
-        assertTrue("the item should be a FileUpload", part1 instanceof FileUpload);
+        assertTrue(part1 instanceof FileUpload, "the item should be a FileUpload");
         FileUpload fileUpload = (FileUpload) part1;
         byte[] fileBytes = fileUpload.get();
-        assertTrue("the filecontent should not be decoded", filecontent.equals(new String(fileBytes)));
+        assertTrue(filecontent.equals(new String(fileBytes)), "the filecontent should not be decoded");
         decoder.destroy();
-        req.release();
+        assertTrue(req.release());
     }
 
     @Test
     public void testMultipartRequestWithFileInvalidCharset() throws Exception {
         final String boundary = "dLV9Wyq26L_-JQxk6ferf-RT153LhOO";
         final DefaultFullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST,
-            "http://localhost");
+                "http://localhost");
         req.headers().add(HttpHeaderNames.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary);
         // Force to use memory-based data.
         final DefaultHttpDataFactory inMemoryFactory = new DefaultHttpDataFactory(false);
         final String data = "asdf";
         final String filename = "tmp;0.txt";
         final String body =
-            "--" + boundary + "\r\n" +
-                "Content-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"\r\n" +
-                "Content-Type: image/gif; charset=ABCD\r\n" +
-                "\r\n" +
-                data + "\r\n" +
-                "--" + boundary + "--\r\n";
+                "--" + boundary + "\r\n" +
+                        "Content-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"\r\n" +
+                        "Content-Type: image/gif; charset=ABCD\r\n" +
+                        "\r\n" +
+                        data + "\r\n" +
+                        "--" + boundary + "--\r\n";
 
         req.content().writeBytes(body.getBytes(CharsetUtil.UTF_8));
         // Create decoder instance to test.
@@ -472,7 +506,7 @@ public class HttpPostRequestDecoderTest {
         } catch (HttpPostRequestDecoder.ErrorDataDecoderException e) {
             assertTrue(e.getCause() instanceof UnsupportedCharsetException);
         } finally {
-            req.release();
+            assertTrue(req.release());
         }
     }
 
@@ -480,22 +514,22 @@ public class HttpPostRequestDecoderTest {
     public void testMultipartRequestWithFieldInvalidCharset() throws Exception {
         final String boundary = "dLV9Wyq26L_-JQxk6ferf-RT153LhOO";
         final DefaultFullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST,
-            "http://localhost");
+                "http://localhost");
         req.headers().add(HttpHeaderNames.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary);
         // Force to use memory-based data.
         final DefaultHttpDataFactory inMemoryFactory = new DefaultHttpDataFactory(false);
         final String aData = "some data would be here. the data should be long enough that it " +
-            "will be longer than the original buffer length of 256 bytes in " +
-            "the HttpPostRequestDecoder in order to trigger the issue. Some more " +
-            "data just to be on the safe side.";
+                "will be longer than the original buffer length of 256 bytes in " +
+                "the HttpPostRequestDecoder in order to trigger the issue. Some more " +
+                "data just to be on the safe side.";
         final String body =
-            "--" + boundary + "\r\n" +
-                "Content-Disposition: form-data; name=\"root\"\r\n" +
-                "Content-Type: text/plain; charset=ABCD\r\n" +
-                "\r\n" +
-                aData +
-                "\r\n" +
-                "--" + boundary + "--\r\n";
+                "--" + boundary + "\r\n" +
+                        "Content-Disposition: form-data; name=\"root\"\r\n" +
+                        "Content-Type: text/plain; charset=ABCD\r\n" +
+                        "\r\n" +
+                        aData +
+                        "\r\n" +
+                        "--" + boundary + "--\r\n";
 
         req.content().writeBytes(body.getBytes(CharsetUtil.UTF_8));
         // Create decoder instance to test.
@@ -505,14 +539,14 @@ public class HttpPostRequestDecoderTest {
         } catch (HttpPostRequestDecoder.ErrorDataDecoderException e) {
             assertTrue(e.getCause() instanceof UnsupportedCharsetException);
         } finally {
-            req.release();
+            assertTrue(req.release());
         }
     }
 
     @Test
     public void testFormEncodeIncorrect() throws Exception {
         LastHttpContent content = new DefaultLastHttpContent(
-                Unpooled.copiedBuffer("project=netty&&project=netty", CharsetUtil.US_ASCII));
+                Unpooled.copiedBuffer("project=netty&=netty&project=netty", CharsetUtil.US_ASCII));
         DefaultHttpRequest req = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/");
         HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(req);
         try {
@@ -521,8 +555,8 @@ public class HttpPostRequestDecoderTest {
         } catch (HttpPostRequestDecoder.ErrorDataDecoderException e) {
             assertTrue(e.getCause() instanceof IllegalArgumentException);
         } finally {
-            decoder.destroy();
             content.release();
+            decoder.destroy();
         }
     }
 
@@ -537,27 +571,27 @@ public class HttpPostRequestDecoderTest {
         String filenameEncoded = URLEncoder.encode(filename, encoding);
 
         final String body = "--" + boundary + "\r\n" +
-          "Content-Disposition: form-data; name=\"file\"; filename*=" + encoding + "''" + filenameEncoded + "\r\n" +
-          "\r\n" +
-          "foo\r\n" +
-          "\r\n" +
-          "--" + boundary + "--";
+                "Content-Disposition: form-data; name=\"file\"; filename*=" + encoding + "''" + filenameEncoded +
+                "\r\n\r\n" +
+                "foo\r\n" +
+                "\r\n" +
+                "--" + boundary + "--";
 
         final DefaultFullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1,
-                                                                      HttpMethod.POST,
-                                                                      "http://localhost",
-                                                                      Unpooled.wrappedBuffer(body.getBytes()));
+                HttpMethod.POST,
+                "http://localhost",
+                Unpooled.wrappedBuffer(body.getBytes()));
 
         req.headers().add(HttpHeaderNames.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary);
         final DefaultHttpDataFactory inMemoryFactory = new DefaultHttpDataFactory(false);
         final HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(inMemoryFactory, req);
         assertFalse(decoder.getBodyHttpDatas().isEmpty());
         InterfaceHttpData part1 = decoder.getBodyHttpDatas().get(0);
-        assertTrue("the item should be a FileUpload", part1 instanceof FileUpload);
+        assertTrue(part1 instanceof FileUpload, "the item should be a FileUpload");
         FileUpload fileUpload = (FileUpload) part1;
-        assertEquals("the filename should be decoded", filename, fileUpload.getFilename());
+        assertEquals(filename, fileUpload.getFilename(), "the filename should be decoded");
         decoder.destroy();
-        req.release();
+        assertTrue(req.release());
     }
 
     // https://github.com/netty/netty/pull/7265
@@ -572,28 +606,28 @@ public class HttpPostRequestDecoderTest {
         String filenameEncoded = URLEncoder.encode(filename, encoding);
 
         final String body = "--" + boundary + "\r\n" +
-          "Content-Disposition: form-data; name=\"file\"; filename*=" +
-              encoding + "'" + language + "'" + filenameEncoded + "\r\n" +
-          "\r\n" +
-          "foo\r\n" +
-          "\r\n" +
-          "--" + boundary + "--";
+                "Content-Disposition: form-data; name=\"file\"; filename*=" +
+                encoding + "'" + language + "'" + filenameEncoded + "\r\n" +
+                "\r\n" +
+                "foo\r\n" +
+                "\r\n" +
+                "--" + boundary + "--";
 
         final DefaultFullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1,
-                                                                      HttpMethod.POST,
-                                                                      "http://localhost",
-                                                                      Unpooled.wrappedBuffer(body.getBytes()));
+                HttpMethod.POST,
+                "http://localhost",
+                Unpooled.wrappedBuffer(body.getBytes()));
 
         req.headers().add(HttpHeaderNames.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary);
         final DefaultHttpDataFactory inMemoryFactory = new DefaultHttpDataFactory(false);
         final HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(inMemoryFactory, req);
         assertFalse(decoder.getBodyHttpDatas().isEmpty());
         InterfaceHttpData part1 = decoder.getBodyHttpDatas().get(0);
-        assertTrue("the item should be a FileUpload", part1 instanceof FileUpload);
+        assertTrue(part1 instanceof FileUpload, "the item should be a FileUpload");
         FileUpload fileUpload = (FileUpload) part1;
-        assertEquals("the filename should be decoded", filename, fileUpload.getFilename());
+        assertEquals(filename, fileUpload.getFilename(), "the filename should be decoded");
         decoder.destroy();
-        req.release();
+        assertTrue(req.release());
     }
 
     // https://github.com/netty/netty/pull/7265
@@ -603,16 +637,16 @@ public class HttpPostRequestDecoderTest {
         final String boundary = "74e78d11b0214bdcbc2f86491eeb4902";
 
         final String body = "--" + boundary + "\r\n" +
-          "Content-Disposition: form-data; name=\"file\"; filename*=not-encoded\r\n" +
-          "\r\n" +
-          "foo\r\n" +
-          "\r\n" +
-          "--" + boundary + "--";
+                "Content-Disposition: form-data; name=\"file\"; filename*=not-encoded\r\n" +
+                "\r\n" +
+                "foo\r\n" +
+                "\r\n" +
+                "--" + boundary + "--";
 
         final DefaultFullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1,
-                                                                      HttpMethod.POST,
-                                                                      "http://localhost",
-                                                                      Unpooled.wrappedBuffer(body.getBytes()));
+                HttpMethod.POST,
+                "http://localhost",
+                Unpooled.wrappedBuffer(body.getBytes()));
 
         req.headers().add(HttpHeaderNames.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary);
 
@@ -624,7 +658,7 @@ public class HttpPostRequestDecoderTest {
         } catch (HttpPostRequestDecoder.ErrorDataDecoderException e) {
             assertTrue(e.getCause() instanceof ArrayIndexOutOfBoundsException);
         } finally {
-            req.release();
+            assertTrue(req.release());
         }
     }
 
@@ -635,16 +669,16 @@ public class HttpPostRequestDecoderTest {
         final String boundary = "74e78d11b0214bdcbc2f86491eeb4902";
 
         final String body = "--" + boundary + "\r\n" +
-          "Content-Disposition: form-data; name=\"file\"; filename*=not-a-charset''filename\r\n" +
-          "\r\n" +
-          "foo\r\n" +
-          "\r\n" +
-          "--" + boundary + "--";
+                "Content-Disposition: form-data; name=\"file\"; filename*=not-a-charset''filename\r\n" +
+                "\r\n" +
+                "foo\r\n" +
+                "\r\n" +
+                "--" + boundary + "--";
 
         final DefaultFullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1,
-                                                                      HttpMethod.POST,
-                                                                      "http://localhost",
-                                                                      Unpooled.wrappedBuffer(body.getBytes()));
+                HttpMethod.POST,
+                "http://localhost",
+                Unpooled.wrappedBuffer(body.getBytes()));
 
         req.headers().add(HttpHeaderNames.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary);
 
@@ -656,7 +690,7 @@ public class HttpPostRequestDecoderTest {
         } catch (HttpPostRequestDecoder.ErrorDataDecoderException e) {
             assertTrue(e.getCause() instanceof UnsupportedCharsetException);
         } finally {
-            req.release();
+            assertTrue(req.release());
         }
     }
 
@@ -665,7 +699,7 @@ public class HttpPostRequestDecoderTest {
     public void testDecodeMalformedEmptyContentTypeFieldParameters() throws Exception {
         final String boundary = "dLV9Wyq26L_-JQxk6ferf-RT153LhOO";
         final DefaultFullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST,
-                                                                      "http://localhost");
+                "http://localhost");
         req.headers().add(HttpHeaderNames.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary);
         // Force to use memory-based data.
         final DefaultHttpDataFactory inMemoryFactory = new DefaultHttpDataFactory(false);
@@ -673,11 +707,11 @@ public class HttpPostRequestDecoderTest {
         final String filename = "tmp-0.txt";
         final String body =
                 "--" + boundary + "\r\n" +
-                "Content-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"\r\n" +
-                "Content-Type: \r\n" +
-                "\r\n" +
-                data + "\r\n" +
-                "--" + boundary + "--\r\n";
+                        "Content-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"\r\n" +
+                        "Content-Type: \r\n" +
+                        "\r\n" +
+                        data + "\r\n" +
+                        "--" + boundary + "--\r\n";
 
         req.content().writeBytes(body.getBytes(CharsetUtil.UTF_8.name()));
         // Create decoder instance to test.
@@ -688,5 +722,322 @@ public class HttpPostRequestDecoderTest {
         FileUpload fileUpload = (FileUpload) part1;
         assertEquals("tmp-0.txt", fileUpload.getFilename());
         decoder.destroy();
+        assertTrue(req.release());
     }
+
+    // https://github.com/netty/netty/issues/8575
+    @Test
+    public void testMultipartRequest() throws Exception {
+        String BOUNDARY = "01f136d9282f";
+
+        byte[] bodyBytes = ("--" + BOUNDARY + "\n" +
+            "Content-Disposition: form-data; name=\"msg_id\"\n" +
+            "\n" +
+            "15200\n" +
+            "--" + BOUNDARY + "\n" +
+            "Content-Disposition: form-data; name=\"msg\"\n" +
+            "\n" +
+            "test message\n" +
+            "--" + BOUNDARY + "--").getBytes();
+        ByteBuf byteBuf = Unpooled.directBuffer(bodyBytes.length);
+        byteBuf.writeBytes(bodyBytes);
+
+        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_0, HttpMethod.POST, "/up", byteBuf);
+        req.headers().add(HttpHeaderNames.CONTENT_TYPE, "multipart/form-data; boundary=" + BOUNDARY);
+
+        HttpPostRequestDecoder decoder =
+                new HttpPostRequestDecoder(new DefaultHttpDataFactory(DefaultHttpDataFactory.MINSIZE),
+                        req,
+                        CharsetUtil.UTF_8);
+
+        assertTrue(decoder.isMultipart());
+        assertFalse(decoder.getBodyHttpDatas().isEmpty());
+        assertEquals(2, decoder.getBodyHttpDatas().size());
+
+        Attribute attrMsg = (Attribute) decoder.getBodyHttpData("msg");
+        assertTrue(attrMsg.getByteBuf().isDirect());
+        assertEquals("test message", attrMsg.getValue());
+        Attribute attrMsgId = (Attribute) decoder.getBodyHttpData("msg_id");
+        assertTrue(attrMsgId.getByteBuf().isDirect());
+        assertEquals("15200", attrMsgId.getValue());
+
+        decoder.destroy();
+        assertTrue(req.release());
+    }
+
+    @Test
+    public void testNotLeak() {
+        final FullHttpRequest request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/",
+                Unpooled.copiedBuffer("a=1&=2&b=3", CharsetUtil.US_ASCII));
+        try {
+            assertThrows(HttpPostRequestDecoder.ErrorDataDecoderException.class, new Executable() {
+                @Override
+                public void execute() {
+                    new HttpPostStandardRequestDecoder(request).destroy();
+                }
+            });
+        } finally {
+            assertTrue(request.release());
+        }
+    }
+
+    @Test
+    public void testNotLeakDirectBufferWhenWrapIllegalArgumentException() {
+        assertThrows(HttpPostRequestDecoder.ErrorDataDecoderException.class, new Executable() {
+            @Override
+            public void execute() {
+                testNotLeakWhenWrapIllegalArgumentException(Unpooled.directBuffer());
+            }
+        });
+    }
+
+    @Test
+    public void testNotLeakHeapBufferWhenWrapIllegalArgumentException() {
+        assertThrows(HttpPostRequestDecoder.ErrorDataDecoderException.class, new Executable() {
+            @Override
+            public void execute() throws Throwable {
+                testNotLeakWhenWrapIllegalArgumentException(Unpooled.buffer());
+            }
+        });
+    }
+
+    private static void testNotLeakWhenWrapIllegalArgumentException(ByteBuf buf) {
+        buf.writeCharSequence("a=b&foo=%22bar%22&==", CharsetUtil.US_ASCII);
+        FullHttpRequest request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/", buf);
+        try {
+            new HttpPostStandardRequestDecoder(request).destroy();
+        } finally {
+            assertTrue(request.release());
+        }
+    }
+
+    @Test
+    public void testMultipartFormDataContentType() {
+        HttpRequest request = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/");
+        assertFalse(HttpPostRequestDecoder.isMultipart(request));
+
+        String multipartDataValue = HttpHeaderValues.MULTIPART_FORM_DATA + ";" + "boundary=gc0p4Jq0M2Yt08jU534c0p";
+        request.headers().set(HttpHeaderNames.CONTENT_TYPE, ";" + multipartDataValue);
+        assertFalse(HttpPostRequestDecoder.isMultipart(request));
+
+        request.headers().set(HttpHeaderNames.CONTENT_TYPE, multipartDataValue);
+        assertTrue(HttpPostRequestDecoder.isMultipart(request));
+    }
+
+    // see https://github.com/netty/netty/issues/10087
+    @Test
+    public void testDecodeWithLanguageContentDispositionFieldParametersForFix() throws Exception {
+
+        final String boundary = "952178786863262625034234";
+
+        String encoding = "UTF-8";
+        String filename = "测试test.txt";
+        String filenameEncoded = URLEncoder.encode(filename, encoding);
+
+        final String body = "--" + boundary + "\r\n" +
+                "Content-Disposition: form-data; name=\"file\"; filename*=\"" +
+                encoding + "''" + filenameEncoded + "\"\r\n" +
+                "\r\n" +
+                "foo\r\n" +
+                "\r\n" +
+                "--" + boundary + "--";
+
+        final DefaultFullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1,
+                HttpMethod.POST,
+                "http://localhost",
+                Unpooled.wrappedBuffer(body.getBytes()));
+
+        req.headers().add(HttpHeaderNames.CONTENT_TYPE, "multipart/form-data; boundary=" + boundary);
+        final DefaultHttpDataFactory inMemoryFactory = new DefaultHttpDataFactory(false);
+        final HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(inMemoryFactory, req);
+        assertFalse(decoder.getBodyHttpDatas().isEmpty());
+        InterfaceHttpData part1 = decoder.getBodyHttpDatas().get(0);
+        assertTrue(part1 instanceof FileUpload, "the item should be a FileUpload");
+        FileUpload fileUpload = (FileUpload) part1;
+        assertEquals(filename, fileUpload.getFilename(), "the filename should be decoded");
+
+        decoder.destroy();
+        assertTrue(req.release());
+    }
+
+    @Test
+    public void testDecodeFullHttpRequestWithUrlEncodedBody() throws Exception {
+        byte[] bodyBytes = "foo=bar&a=b&empty=&city=%3c%22new%22%20york%20city%3e&other_city=los+angeles".getBytes();
+        ByteBuf content = Unpooled.directBuffer(bodyBytes.length);
+        content.writeBytes(bodyBytes);
+
+        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/", content);
+        HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(req);
+        assertFalse(decoder.getBodyHttpDatas().isEmpty());
+
+        assertFalse(decoder.getBodyHttpDatas().isEmpty());
+        assertEquals(5, decoder.getBodyHttpDatas().size());
+
+        Attribute attr = (Attribute) decoder.getBodyHttpData("foo");
+        assertTrue(attr.getByteBuf().isDirect());
+        assertEquals("bar", attr.getValue());
+
+        attr = (Attribute) decoder.getBodyHttpData("a");
+        assertTrue(attr.getByteBuf().isDirect());
+        assertEquals("b", attr.getValue());
+
+        attr = (Attribute) decoder.getBodyHttpData("empty");
+        assertTrue(attr.getByteBuf().isDirect());
+        assertEquals("", attr.getValue());
+
+        attr = (Attribute) decoder.getBodyHttpData("city");
+        assertTrue(attr.getByteBuf().isDirect());
+        assertEquals("<\"new\" york city>", attr.getValue());
+
+        attr = (Attribute) decoder.getBodyHttpData("other_city");
+        assertTrue(attr.getByteBuf().isDirect());
+        assertEquals("los angeles", attr.getValue());
+
+        decoder.destroy();
+        assertTrue(req.release());
+    }
+
+    @Test
+    public void testDecodeFullHttpRequestWithUrlEncodedBodyWithBrokenHexByte0() {
+        byte[] bodyBytes = "foo=bar&a=b&empty=%&city=paris".getBytes();
+        ByteBuf content = Unpooled.directBuffer(bodyBytes.length);
+        content.writeBytes(bodyBytes);
+
+        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/", content);
+        try {
+            new HttpPostRequestDecoder(req);
+            fail("Was expecting an ErrorDataDecoderException");
+        } catch (HttpPostRequestDecoder.ErrorDataDecoderException e) {
+            assertEquals("Invalid hex byte at index '0' in string: '%'", e.getMessage());
+        } finally {
+            assertTrue(req.release());
+        }
+    }
+
+    @Test
+    public void testDecodeFullHttpRequestWithUrlEncodedBodyWithBrokenHexByte1() {
+        byte[] bodyBytes = "foo=bar&a=b&empty=%2&city=london".getBytes();
+        ByteBuf content = Unpooled.directBuffer(bodyBytes.length);
+        content.writeBytes(bodyBytes);
+
+        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/", content);
+        try {
+            new HttpPostRequestDecoder(req);
+            fail("Was expecting an ErrorDataDecoderException");
+        } catch (HttpPostRequestDecoder.ErrorDataDecoderException e) {
+            assertEquals("Invalid hex byte at index '0' in string: '%2'", e.getMessage());
+        } finally {
+            assertTrue(req.release());
+        }
+    }
+
+    @Test
+    public void testDecodeFullHttpRequestWithUrlEncodedBodyWithInvalidHexNibbleHi() {
+        byte[] bodyBytes = "foo=bar&a=b&empty=%Zc&city=london".getBytes();
+        ByteBuf content = Unpooled.directBuffer(bodyBytes.length);
+        content.writeBytes(bodyBytes);
+
+        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/", content);
+        try {
+            new HttpPostRequestDecoder(req);
+            fail("Was expecting an ErrorDataDecoderException");
+        } catch (HttpPostRequestDecoder.ErrorDataDecoderException e) {
+            assertEquals("Invalid hex byte at index '0' in string: '%Zc'", e.getMessage());
+        } finally {
+            assertTrue(req.release());
+        }
+    }
+
+    @Test
+    public void testDecodeFullHttpRequestWithUrlEncodedBodyWithInvalidHexNibbleLo() {
+        byte[] bodyBytes = "foo=bar&a=b&empty=%2g&city=london".getBytes();
+        ByteBuf content = Unpooled.directBuffer(bodyBytes.length);
+        content.writeBytes(bodyBytes);
+
+        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/", content);
+        try {
+            new HttpPostRequestDecoder(req);
+            fail("Was expecting an ErrorDataDecoderException");
+        } catch (HttpPostRequestDecoder.ErrorDataDecoderException e) {
+            assertEquals("Invalid hex byte at index '0' in string: '%2g'", e.getMessage());
+        } finally {
+            assertTrue(req.release());
+        }
+    }
+
+    @Test
+    public void testDecodeMultipartRequest() {
+        byte[] bodyBytes = ("--be38b42a9ad2713f\n" +
+                "content-disposition: form-data; name=\"title\"\n" +
+                "content-length: 10\n" +
+                "content-type: text/plain; charset=UTF-8\n" +
+                "\n" +
+                "bar-stream\n" +
+                "--be38b42a9ad2713f\n" +
+                "content-disposition: form-data; name=\"data\"; filename=\"data.json\"\n" +
+                "content-length: 16\n" +
+                "content-type: application/json; charset=UTF-8\n" +
+                "\n" +
+                "{\"title\":\"Test\"}\n" +
+                "--be38b42a9ad2713f--").getBytes();
+        ByteBuf content = Unpooled.directBuffer(bodyBytes.length);
+        content.writeBytes(bodyBytes);
+        FullHttpRequest req = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, "/", content);
+        req.headers().add("Content-Type", "multipart/form-data;boundary=be38b42a9ad2713f");
+
+        try {
+            HttpPostRequestDecoder decoder = new HttpPostRequestDecoder(new DefaultHttpDataFactory(false), req);
+            assertEquals(2, decoder.getBodyHttpDatas().size());
+            InterfaceHttpData data = decoder.getBodyHttpData("title");
+            assertTrue(data instanceof MemoryAttribute);
+            assertEquals("bar-stream", ((MemoryAttribute) data).getString());
+            assertTrue(data.release());
+            data = decoder.getBodyHttpData("data");
+            assertTrue(data instanceof MemoryFileUpload);
+            assertEquals("{\"title\":\"Test\"}", ((MemoryFileUpload) data).getString());
+            assertTrue(data.release());
+            decoder.destroy();
+        } catch (HttpPostRequestDecoder.ErrorDataDecoderException e) {
+            fail("Was not expecting an exception");
+        } finally {
+            assertTrue(req.release());
+        }
+    }
+
+    /**
+     * when diskFilename contain "\" create temp file error
+     */
+    @Test
+    void testHttpPostStandardRequestDecoderToDiskNameContainingUnauthorizedChar() throws UnsupportedEncodingException {
+        StringBuffer sb = new StringBuffer();
+        byte[] bodyBytes = ("aaaa/bbbb=aaaaaaaaaa" +
+                "aaaaaaaaaaaaaaaaaaaaaaaaaa" +
+                "aaaaaaaaaaaaaaaaaaaaaaaaaa" +
+                "aaaaaaaaaaaaaaaaaaa").getBytes(CharsetUtil.US_ASCII);
+        ByteBuf content = Unpooled.directBuffer(bodyBytes.length);
+        content.writeBytes(bodyBytes);
+
+        FullHttpRequest req =
+                new DefaultFullHttpRequest(
+                HttpVersion.HTTP_1_1,
+                HttpMethod.POST,
+                "/",
+                content);
+        HttpPostStandardRequestDecoder decoder = null;
+        try {
+            decoder = new HttpPostStandardRequestDecoder(
+                    new DefaultHttpDataFactory(true),
+                    req
+            );
+            decoder.destroy();
+        } catch (HttpPostRequestDecoder.ErrorDataDecoderException e) {
+            if (null != decoder) {
+                decoder.destroy();
+            }
+            fail("Was not expecting an exception");
+        } finally {
+            assertTrue(req.release());
+        }
+    }
+
 }

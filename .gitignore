@@ -8,6 +8,7 @@
 *.ipr
 *.iws
 .idea/
+.shelf/
 
 # Geany project file
 .geany
@@ -29,6 +30,11 @@
 
 # JVM crash logs
 hs_err_pid*.log
+replay_pid*.log
+
+# JVM dumps
+*.hprof.xz
+*.threads
 
 dependency-reduced-pom.xml
 
@@ -41,3 +47,10 @@ mainframer
 # exclude docker-sync stuff
 .docker-sync
 */.docker-sync
+
+# exclude vscode files
+.vscode/
+*.factorypath
+
+# exclude file created by the flatten plugin
+.flattened-pom.xml

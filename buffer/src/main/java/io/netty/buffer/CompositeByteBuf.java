@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -19,6 +19,7 @@ import io.netty.util.ByteProcessor;
 import io.netty.util.IllegalReferenceCountException;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.internal.EmptyArrays;
+import io.netty.util.internal.ObjectUtil;
 import io.netty.util.internal.RecyclableArrayList;
 
 import java.io.IOException;
@@ -61,14 +62,13 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
 
     private CompositeByteBuf(ByteBufAllocator alloc, boolean direct, int maxNumComponents, int initSize) {
         super(AbstractByteBufAllocator.DEFAULT_MAX_CAPACITY);
-        if (alloc == null) {
-            throw new NullPointerException("alloc");
-        }
+
+        this.alloc = ObjectUtil.checkNotNull(alloc, "alloc");
         if (maxNumComponents < 1) {
             throw new IllegalArgumentException(
                     "maxNumComponents: " + maxNumComponents + " (expected: >= 1)");
         }
-        this.alloc = alloc;
+
         this.direct = direct;
         this.maxNumComponents = maxNumComponents;
         components = newCompArray(initSize, maxNumComponents);
@@ -267,6 +267,13 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
         return this;
     }
 
+    private static void checkForOverflow(int capacity, int readableBytes) {
+        if (capacity + readableBytes < 0) {
+            throw new IllegalArgumentException("Can't increase by " + readableBytes + " as capacity(" + capacity + ")" +
+                    " would overflow " + Integer.MAX_VALUE);
+        }
+    }
+
     /**
      * Precondition is that {@code buffer != null}.
      */
@@ -277,8 +284,12 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
             checkComponentIndex(cIndex);
 
             // No need to consolidate - just add a component to the list.
-            Component c = newComponent(buffer, 0);
+            Component c = newComponent(ensureAccessible(buffer), 0);
             int readableBytes = c.length();
+
+            // Check if we would overflow.
+            // See https://github.com/netty/netty/issues/10194
+            checkForOverflow(capacity(), readableBytes);
 
             addComp(cIndex, c);
             wasAdded = true;
@@ -298,24 +309,42 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
         }
     }
 
-    @SuppressWarnings("deprecation")
-    private Component newComponent(ByteBuf buf, int offset) {
+    private static ByteBuf ensureAccessible(final ByteBuf buf) {
         if (checkAccessible && !buf.isAccessible()) {
             throw new IllegalReferenceCountException(0);
         }
-        int srcIndex = buf.readerIndex(), len = buf.readableBytes();
-        ByteBuf slice = null;
-        // unwrap if already sliced
-        if (buf instanceof AbstractUnpooledSlicedByteBuf) {
-            srcIndex += ((AbstractUnpooledSlicedByteBuf) buf).idx(0);
-            slice = buf;
-            buf = buf.unwrap();
-        } else if (buf instanceof PooledSlicedByteBuf) {
-            srcIndex += ((PooledSlicedByteBuf) buf).adjustment;
-            slice = buf;
-            buf = buf.unwrap();
+        return buf;
+    }
+
+    @SuppressWarnings("deprecation")
+    private Component newComponent(final ByteBuf buf, final int offset) {
+        final int srcIndex = buf.readerIndex();
+        final int len = buf.readableBytes();
+
+        // unpeel any intermediate outer layers (UnreleasableByteBuf, LeakAwareByteBufs, SwappedByteBuf)
+        ByteBuf unwrapped = buf;
+        int unwrappedIndex = srcIndex;
+        while (unwrapped instanceof WrappedByteBuf || unwrapped instanceof SwappedByteBuf) {
+            unwrapped = unwrapped.unwrap();
         }
-        return new Component(buf.order(ByteOrder.BIG_ENDIAN), srcIndex, offset, len, slice);
+
+        // unwrap if already sliced
+        if (unwrapped instanceof AbstractUnpooledSlicedByteBuf) {
+            unwrappedIndex += ((AbstractUnpooledSlicedByteBuf) unwrapped).idx(0);
+            unwrapped = unwrapped.unwrap();
+        } else if (unwrapped instanceof PooledSlicedByteBuf) {
+            unwrappedIndex += ((PooledSlicedByteBuf) unwrapped).adjustment;
+            unwrapped = unwrapped.unwrap();
+        } else if (unwrapped instanceof DuplicatedByteBuf || unwrapped instanceof PooledDuplicatedByteBuf) {
+            unwrapped = unwrapped.unwrap();
+        }
+
+        // We don't need to slice later to expose the internal component if the readable range
+        // is already the entire buffer
+        final ByteBuf slice = buf.capacity() == len ? buf : null;
+
+        return new Component(buf.order(ByteOrder.BIG_ENDIAN), srcIndex,
+                unwrapped.order(ByteOrder.BIG_ENDIAN), unwrappedIndex, offset, len, slice);
     }
 
     /**
@@ -342,6 +371,20 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
     private CompositeByteBuf addComponents0(boolean increaseWriterIndex,
             final int cIndex, ByteBuf[] buffers, int arrOffset) {
         final int len = buffers.length, count = len - arrOffset;
+
+        int readableBytes = 0;
+        int capacity = capacity();
+        for (int i = arrOffset; i < buffers.length; i++) {
+            ByteBuf b = buffers[i];
+            if (b == null) {
+                break;
+            }
+            readableBytes += b.readableBytes();
+
+            // Check if we would overflow.
+            // See https://github.com/netty/netty/issues/10194
+            checkForOverflow(capacity, readableBytes);
+        }
         // only set ci after we've shifted so that finally block logic is always correct
         int ci = Integer.MAX_VALUE;
         try {
@@ -353,7 +396,7 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
                 if (b == null) {
                     break;
                 }
-                Component c = newComponent(b, nextOffset);
+                Component c = newComponent(ensureAccessible(b), nextOffset);
                 components[ci] = c;
                 nextOffset = c.endOffset;
             }
@@ -437,7 +480,12 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
             consolidateIfNeeded();
             return this;
         }
-        final CompositeByteBuf from = (CompositeByteBuf) buffer;
+        final CompositeByteBuf from;
+        if (buffer instanceof WrappedCompositeByteBuf) {
+            from = (CompositeByteBuf) buffer.unwrap();
+        } else {
+            from = (CompositeByteBuf) buffer;
+        }
         from.checkIndex(ridx, widx - ridx);
         final Component[] fromComponents = from.components;
         final int compCountBefore = componentCount;
@@ -450,11 +498,9 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
                 final int toIdx = Math.min(widx, component.endOffset);
                 final int len = toIdx - fromIdx;
                 if (len > 0) { // skip empty components
-                    // Note that it's safe to just retain the unwrapped buf here, even in the case
-                    // of PooledSlicedByteBufs - those slices will still be properly released by the
-                    // source Component's free() method.
                     addComp(componentCount, new Component(
-                            component.buf.retain(), component.idx(fromIdx), newOffset, len, null));
+                            component.srcBuf.retain(), component.srcIdx(fromIdx),
+                            component.buf, component.idx(fromIdx), newOffset, len, null));
                 }
                 if (widx == toIdx) {
                     break;
@@ -522,18 +568,7 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
         // operation.
         int size = componentCount;
         if (size > maxNumComponents) {
-            final int capacity = components[size - 1].endOffset;
-
-            ByteBuf consolidated = allocBuffer(capacity);
-            lastAccessed = null;
-
-            // We're not using foreach to avoid creating an iterator.
-            for (int i = 0; i < size; i ++) {
-                components[i].transferTo(consolidated);
-            }
-
-            components[0] = new Component(consolidated, 0, 0, capacity, consolidated);
-            removeCompRange(1, size);
+            consolidate0(0, size);
         }
     }
 
@@ -695,7 +730,10 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
         // The first component
         Component firstC = components[componentId];
 
-        ByteBuf slice = firstC.buf.slice(firstC.idx(offset), Math.min(firstC.endOffset - offset, bytesToSlice));
+        // It's important to use srcBuf and NOT buf as we need to return the "original" source buffer and not the
+        // unwrapped one as otherwise we could loose the ability to correctly update the reference count on the
+        // returned buffer.
+        ByteBuf slice = firstC.srcBuf.slice(firstC.srcIdx(offset), Math.min(firstC.endOffset - offset, bytesToSlice));
         bytesToSlice -= slice.readableBytes();
 
         if (bytesToSlice == 0) {
@@ -708,7 +746,11 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
         // Add all the slices until there is nothing more left and then return the List.
         do {
             Component component = components[++componentId];
-            slice = component.buf.slice(component.idx(component.offset), Math.min(component.length(), bytesToSlice));
+            // It's important to use srcBuf and NOT buf as we need to return the "original" source buffer and not the
+            // unwrapped one as otherwise we could loose the ability to correctly update the reference count on the
+            // returned buffer.
+            slice = component.srcBuf.slice(component.srcIdx(component.offset),
+                    Math.min(component.length(), bytesToSlice));
             bytesToSlice -= slice.readableBytes();
             sliceList.add(slice);
         } while (bytesToSlice > 0);
@@ -1570,6 +1612,10 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
         for (int low = 0, high = componentCount; low <= high;) {
             int mid = low + high >>> 1;
             Component c = components[mid];
+            if (c == null) {
+                throw new IllegalStateException("No component found for offset. " +
+                        "Composite buffer layout might be outdated, e.g. from a discardReadBytes call.");
+            }
             if (offset >= c.endOffset) {
                 low = mid + 1;
             } else if (offset < c.offset) {
@@ -1625,6 +1671,9 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
             if (buf.nioBufferCount() == 1) {
                 return buf.nioBuffer(c.idx(index), length);
             }
+            break;
+        default:
+            break;
         }
 
         ByteBuffer[] buffers = nioBuffers(index, length);
@@ -1682,20 +1731,7 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
      */
     public CompositeByteBuf consolidate() {
         ensureAccessible();
-        final int numComponents = componentCount;
-        if (numComponents <= 1) {
-            return this;
-        }
-
-        final int capacity = components[numComponents - 1].endOffset;
-        final ByteBuf consolidated = allocBuffer(capacity);
-
-        for (int i = 0; i < numComponents; i ++) {
-            components[i].transferTo(consolidated);
-        }
-        lastAccessed = null;
-        components[0] = new Component(consolidated, 0, 0, capacity, consolidated);
-        removeCompRange(1, numComponents);
+        consolidate0(0, componentCount);
         return this;
     }
 
@@ -1707,13 +1743,18 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
      */
     public CompositeByteBuf consolidate(int cIndex, int numComponents) {
         checkComponentIndex(cIndex, numComponents);
+        consolidate0(cIndex, numComponents);
+        return this;
+    }
+
+    private void consolidate0(int cIndex, int numComponents) {
         if (numComponents <= 1) {
-            return this;
+            return;
         }
 
         final int endCIndex = cIndex + numComponents;
-        final Component last = components[endCIndex - 1];
-        final int capacity = last.endOffset - components[cIndex].offset;
+        final int startOffset = cIndex != 0 ? components[cIndex].offset : 0;
+        final int capacity = components[endCIndex - 1].endOffset - startOffset;
         final ByteBuf consolidated = allocBuffer(capacity);
 
         for (int i = cIndex; i < endCIndex; i ++) {
@@ -1721,9 +1762,10 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
         }
         lastAccessed = null;
         removeCompRange(cIndex + 1, endCIndex);
-        components[cIndex] = new Component(consolidated, 0, 0, capacity, consolidated);
-        updateComponentOffsets(cIndex);
-        return this;
+        components[cIndex] = newComponent(consolidated, 0);
+        if (cIndex != 0 || numComponents != componentCount) {
+            updateComponentOffsets(cIndex);
+        }
     }
 
     /**
@@ -1811,6 +1853,7 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
         int trimmedBytes = readerIndex - c.offset;
         c.offset = 0;
         c.endOffset -= readerIndex;
+        c.srcAdjustment += readerIndex;
         c.adjustment += readerIndex;
         ByteBuf slice = c.slice;
         if (slice != null) {
@@ -1844,19 +1887,30 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
     }
 
     private static final class Component {
-        final ByteBuf buf;
-        int adjustment;
-        int offset;
-        int endOffset;
+        final ByteBuf srcBuf; // the originally added buffer
+        final ByteBuf buf; // srcBuf unwrapped zero or more times
+
+        int srcAdjustment; // index of the start of this CompositeByteBuf relative to srcBuf
+        int adjustment; // index of the start of this CompositeByteBuf relative to buf
+
+        int offset; // offset of this component within this CompositeByteBuf
+        int endOffset; // end offset of this component within this CompositeByteBuf
 
         private ByteBuf slice; // cached slice, may be null
 
-        Component(ByteBuf buf, int srcOffset, int offset, int len, ByteBuf slice) {
+        Component(ByteBuf srcBuf, int srcOffset, ByteBuf buf, int bufOffset,
+                int offset, int len, ByteBuf slice) {
+            this.srcBuf = srcBuf;
+            this.srcAdjustment = srcOffset - offset;
             this.buf = buf;
+            this.adjustment = bufOffset - offset;
             this.offset = offset;
             this.endOffset = offset + len;
-            this.adjustment = srcOffset - offset;
             this.slice = slice;
+        }
+
+        int srcIdx(int index) {
+            return index + srcAdjustment;
         }
 
         int idx(int index) {
@@ -1870,6 +1924,7 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
         void reposition(int newOffset) {
             int move = newOffset - offset;
             endOffset += move;
+            srcAdjustment -= move;
             adjustment -= move;
             offset = newOffset;
         }
@@ -1881,35 +1936,27 @@ public class CompositeByteBuf extends AbstractReferenceCountedByteBuf implements
         }
 
         ByteBuf slice() {
-            return slice != null ? slice : (slice = buf.slice(idx(offset), length()));
+            ByteBuf s = slice;
+            if (s == null) {
+                slice = s = srcBuf.slice(srcIdx(offset), length());
+            }
+            return s;
         }
 
         ByteBuf duplicate() {
-            return buf.duplicate().setIndex(idx(offset), idx(endOffset));
+            return srcBuf.duplicate();
         }
 
         ByteBuffer internalNioBuffer(int index, int length) {
-            // We must not return the unwrapped buffer's internal buffer
-            // if it was originally added as a slice - this check of the
-            // slice field is threadsafe since we only care whether it
-            // was set upon Component construction, and we aren't
-            // attempting to access the referenced slice itself
-            return slice != null ? buf.nioBuffer(idx(index), length)
-                    : buf.internalNioBuffer(idx(index), length);
+            // Some buffers override this so we must use srcBuf
+            return srcBuf.internalNioBuffer(srcIdx(index), length);
         }
 
         void free() {
-            // Release the slice if present since it may have a different
-            // refcount to the unwrapped buf if it is a PooledSlicedByteBuf
-            ByteBuf buffer = slice;
-            if (buffer != null) {
-                buffer.release();
-            } else {
-                buf.release();
-            }
-            // null out in either case since it could be racy if set lazily (but not
-            // in the case we care about, where it will have been set in the ctor)
             slice = null;
+            // Release the original buffer since it may have a different
+            // refcount to the unwrapped buf (e.g. if PooledSlicedByteBuf)
+            srcBuf.release();
         }
     }
 

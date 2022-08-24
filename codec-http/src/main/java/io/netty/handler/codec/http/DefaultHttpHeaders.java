@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -78,6 +78,18 @@ public class DefaultHttpHeaders extends HttpHeaders {
         this(true);
     }
 
+    /**
+     * <b>Warning!</b> Setting <code>validate</code> to <code>false</code> will mean that Netty won't
+     * validate & protect against user-supplied header values that are malicious.
+     * This can leave your server implementation vulnerable to
+     * <a href="https://cwe.mitre.org/data/definitions/113.html">
+     *     CWE-113: Improper Neutralization of CRLF Sequences in HTTP Headers ('HTTP Response Splitting')
+     * </a>.
+     * When disabling this validation, it is the responsibility of the caller to ensure that the values supplied
+     * do not contain a non-url-escaped carriage return (CR) and/or line feed (LF) characters.
+     *
+     * @param validate Should Netty validate Header values to ensure they aren't malicious.
+     */
     public DefaultHttpHeaders(boolean validate) {
         this(validate, nameValidator(validate));
     }
@@ -355,6 +367,10 @@ public class DefaultHttpHeaders extends HttpHeaders {
 
     private static void validateHeaderNameElement(byte value) {
         switch (value) {
+        case 0x1c:
+        case 0x1d:
+        case 0x1e:
+        case 0x1f:
         case 0x00:
         case '\t':
         case '\n':
@@ -379,6 +395,10 @@ public class DefaultHttpHeaders extends HttpHeaders {
 
     private static void validateHeaderNameElement(char value) {
         switch (value) {
+        case 0x1c:
+        case 0x1d:
+        case 0x1e:
+        case 0x1f:
         case 0x00:
         case '\t':
         case '\n':
@@ -442,7 +462,7 @@ public class DefaultHttpHeaders extends HttpHeaders {
             }
 
             if (state != 0) {
-                throw new IllegalArgumentException("a header value must not end with '\\r' or '\\n':" + seq);
+                throw new IllegalArgumentException("a header value must not end with '\\r' or '\\n'");
             }
             return seq;
         }
@@ -458,11 +478,13 @@ public class DefaultHttpHeaders extends HttpHeaders {
                 // Check the absolutely prohibited characters.
                 switch (character) {
                 case 0x0: // NULL
-                    throw new IllegalArgumentException("a header value contains a prohibited character '\0': " + seq);
+                    throw new IllegalArgumentException("a header value contains a prohibited character '\0'");
                 case 0x0b: // Vertical tab
-                    throw new IllegalArgumentException("a header value contains a prohibited character '\\v': " + seq);
+                    throw new IllegalArgumentException("a header value contains a prohibited character '\\v'");
                 case '\f':
-                    throw new IllegalArgumentException("a header value contains a prohibited character '\\f': " + seq);
+                    throw new IllegalArgumentException("a header value contains a prohibited character '\\f'");
+                default:
+                    break;
                 }
             }
 
@@ -474,23 +496,25 @@ public class DefaultHttpHeaders extends HttpHeaders {
                             return 1;
                         case '\n':
                             return 2;
+                        default:
+                            break;
                     }
                     break;
                 case 1:
-                    switch (character) {
-                        case '\n':
-                            return 2;
-                        default:
-                            throw new IllegalArgumentException("only '\\n' is allowed after '\\r': " + seq);
+                    if (character == '\n') {
+                        return 2;
                     }
+                    throw new IllegalArgumentException("only '\\n' is allowed after '\\r'");
                 case 2:
                     switch (character) {
                         case '\t':
                         case ' ':
                             return 0;
                         default:
-                            throw new IllegalArgumentException("only ' ' and '\\t' are allowed after '\\n': " + seq);
+                            throw new IllegalArgumentException("only ' ' and '\\t' are allowed after '\\n'");
                     }
+                default:
+                    break;
             }
             return state;
         }

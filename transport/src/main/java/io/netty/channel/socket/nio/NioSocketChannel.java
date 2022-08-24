@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -28,16 +28,19 @@ import io.netty.channel.FileRegion;
 import io.netty.channel.RecvByteBufAllocator;
 import io.netty.channel.nio.AbstractNioByteChannel;
 import io.netty.channel.socket.DefaultSocketChannelConfig;
+import io.netty.channel.socket.InternetProtocolFamily;
 import io.netty.channel.socket.ServerSocketChannel;
 import io.netty.channel.socket.SocketChannelConfig;
 import io.netty.util.concurrent.GlobalEventExecutor;
 import io.netty.util.internal.PlatformDependent;
 import io.netty.util.internal.SocketUtils;
+import io.netty.util.internal.SuppressJava6Requirement;
 import io.netty.util.internal.UnstableApi;
 import io.netty.util.internal.logging.InternalLogger;
 import io.netty.util.internal.logging.InternalLoggerFactory;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
@@ -57,21 +60,19 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(NioSocketChannel.class);
     private static final SelectorProvider DEFAULT_SELECTOR_PROVIDER = SelectorProvider.provider();
 
-    private static SocketChannel newSocket(SelectorProvider provider) {
+    private static final Method OPEN_SOCKET_CHANNEL_WITH_FAMILY =
+            SelectorProviderUtil.findOpenMethod("openSocketChannel");
+
+    private final SocketChannelConfig config;
+
+    private static SocketChannel newChannel(SelectorProvider provider, InternetProtocolFamily family) {
         try {
-            /**
-             *  Use the {@link SelectorProvider} to open {@link SocketChannel} and so remove condition in
-             *  {@link SelectorProvider#provider()} which is called by each SocketChannel.open() otherwise.
-             *
-             *  See <a href="https://github.com/netty/netty/issues/2308">#2308</a>.
-             */
-            return provider.openSocketChannel();
+            SocketChannel channel = SelectorProviderUtil.newChannel(OPEN_SOCKET_CHANNEL_WITH_FAMILY, provider, family);
+            return channel == null ? provider.openSocketChannel() : channel;
         } catch (IOException e) {
             throw new ChannelException("Failed to open a socket.", e);
         }
     }
-
-    private final SocketChannelConfig config;
 
     /**
      * Create a new instance
@@ -84,7 +85,14 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
      * Create a new instance using the given {@link SelectorProvider}.
      */
     public NioSocketChannel(SelectorProvider provider) {
-        this(newSocket(provider));
+        this(provider, null);
+    }
+
+    /**
+     * Create a new instance using the given {@link SelectorProvider} and protocol family (supported only since JDK 15).
+     */
+    public NioSocketChannel(SelectorProvider provider, InternetProtocolFamily family) {
+        this(newChannel(provider, family));
     }
 
     /**
@@ -152,6 +160,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
         return (InetSocketAddress) super.remoteAddress();
     }
 
+    @SuppressJava6Requirement(reason = "Usage guarded by java version check")
     @UnstableApi
     @Override
     protected final void doShutdownOutput() throws Exception {
@@ -270,6 +279,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
         }
     }
 
+    @SuppressJava6Requirement(reason = "Usage guarded by java version check")
     private void shutdownInput0() throws Exception {
         if (PlatformDependent.javaVersion() >= 7) {
             javaChannel().shutdownInput();
@@ -389,7 +399,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
             ByteBuffer[] nioBuffers = in.nioBuffers(1024, maxBytesPerGatheringWrite);
             int nioBufferCnt = in.nioBufferCount();
 
-            // Always us nioBuffers() to workaround data-corruption.
+            // Always use nioBuffers() to workaround data-corruption.
             // See https://github.com/netty/netty/issues/2761
             switch (nioBufferCnt) {
                 case 0:
@@ -496,7 +506,6 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
             return super.getOption(option);
         }
 
-        @SuppressWarnings("unchecked")
         @Override
         public Map<ChannelOption<?>, Object> getOptions() {
             if (PlatformDependent.javaVersion() >= 7) {
@@ -517,7 +526,7 @@ public class NioSocketChannel extends AbstractNioByteChannel implements io.netty
             // Multiply by 2 to give some extra space in case the OS can process write data faster than we can provide.
             int newSendBufferSize = getSendBufferSize() << 1;
             if (newSendBufferSize > 0) {
-                setMaxBytesPerGatheringWrite(getSendBufferSize() << 1);
+                setMaxBytesPerGatheringWrite(newSendBufferSize);
             }
         }
 

@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -38,8 +38,10 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * {@link AbstractBootstrap} is a helper class that makes it easy to bootstrap a {@link Channel}. It support
@@ -49,13 +51,20 @@ import java.util.Map;
  * transports such as datagram (UDP).</p>
  */
 public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C extends Channel> implements Cloneable {
+    @SuppressWarnings("unchecked")
+    private static final Map.Entry<ChannelOption<?>, Object>[] EMPTY_OPTION_ARRAY = new Map.Entry[0];
+    @SuppressWarnings("unchecked")
+    private static final Map.Entry<AttributeKey<?>, Object>[] EMPTY_ATTRIBUTE_ARRAY = new Map.Entry[0];
 
     volatile EventLoopGroup group;
     @SuppressWarnings("deprecation")
     private volatile ChannelFactory<? extends C> channelFactory;
     private volatile SocketAddress localAddress;
+
+    // The order in which ChannelOptions are applied is important they may depend on each other for validation
+    // purposes.
     private final Map<ChannelOption<?>, Object> options = new LinkedHashMap<ChannelOption<?>, Object>();
-    private final Map<AttributeKey<?>, Object> attrs = new LinkedHashMap<AttributeKey<?>, Object>();
+    private final Map<AttributeKey<?>, Object> attrs = new ConcurrentHashMap<AttributeKey<?>, Object>();
     private volatile ChannelHandler handler;
 
     AbstractBootstrap() {
@@ -70,9 +79,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         synchronized (bootstrap.options) {
             options.putAll(bootstrap.options);
         }
-        synchronized (bootstrap.attrs) {
-            attrs.putAll(bootstrap.attrs);
-        }
+        attrs.putAll(bootstrap.attrs);
     }
 
     /**
@@ -165,12 +172,10 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
      */
     public <T> B option(ChannelOption<T> option, T value) {
         ObjectUtil.checkNotNull(option, "option");
-        if (value == null) {
-            synchronized (options) {
+        synchronized (options) {
+            if (value == null) {
                 options.remove(option);
-            }
-        } else {
-            synchronized (options) {
+            } else {
                 options.put(option, value);
             }
         }
@@ -184,13 +189,9 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     public <T> B attr(AttributeKey<T> key, T value) {
         ObjectUtil.checkNotNull(key, "key");
         if (value == null) {
-            synchronized (attrs) {
-                attrs.remove(key);
-            }
+            attrs.remove(key);
         } else {
-            synchronized (attrs) {
-                attrs.put(key, value);
-            }
+            attrs.put(key, value);
         }
         return self();
     }
@@ -384,15 +385,22 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
      */
     public abstract AbstractBootstrapConfig<B, C> config();
 
-    static <K, V> Map<K, V> copiedMap(Map<K, V> map) {
-        final Map<K, V> copied;
-        synchronized (map) {
-            if (map.isEmpty()) {
-                return Collections.emptyMap();
-            }
-            copied = new LinkedHashMap<K, V>(map);
+    final Map.Entry<ChannelOption<?>, Object>[] newOptionsArray() {
+        return newOptionsArray(options);
+    }
+
+    static Map.Entry<ChannelOption<?>, Object>[] newOptionsArray(Map<ChannelOption<?>, Object> options) {
+        synchronized (options) {
+            return new LinkedHashMap<ChannelOption<?>, Object>(options).entrySet().toArray(EMPTY_OPTION_ARRAY);
         }
-        return Collections.unmodifiableMap(copied);
+    }
+
+    final Map.Entry<AttributeKey<?>, Object>[] newAttributesArray() {
+        return newAttributesArray(attrs0());
+    }
+
+    static Map.Entry<AttributeKey<?>, Object>[] newAttributesArray(Map<AttributeKey<?>, Object> attributes) {
+        return attributes.entrySet().toArray(EMPTY_ATTRIBUTE_ARRAY);
     }
 
     final Map<ChannelOption<?>, Object> options0() {
@@ -417,17 +425,27 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     }
 
     final Map<ChannelOption<?>, Object> options() {
-        return copiedMap(options);
+        synchronized (options) {
+            return copiedMap(options);
+        }
     }
 
     final Map<AttributeKey<?>, Object> attrs() {
         return copiedMap(attrs);
     }
 
-    static void setChannelOptions(
-            Channel channel, Map<ChannelOption<?>, Object> options, InternalLogger logger) {
-        for (Map.Entry<ChannelOption<?>, Object> e: options.entrySet()) {
-            setChannelOption(channel, e.getKey(), e.getValue(), logger);
+    static <K, V> Map<K, V> copiedMap(Map<K, V> map) {
+        if (map.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return Collections.unmodifiableMap(new HashMap<K, V>(map));
+    }
+
+    static void setAttributes(Channel channel, Map.Entry<AttributeKey<?>, Object>[] attrs) {
+        for (Map.Entry<AttributeKey<?>, Object> e: attrs) {
+            @SuppressWarnings("unchecked")
+            AttributeKey<Object> key = (AttributeKey<Object>) e.getKey();
+            channel.attr(key).set(e.getValue());
         }
     }
 

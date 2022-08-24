@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -19,6 +19,7 @@ import java.net.SocketAddress;
 import java.nio.channels.ClosedChannelException;
 import java.util.ArrayDeque;
 import java.util.Queue;
+import java.util.concurrent.TimeUnit;
 
 import io.netty.channel.AbstractChannel;
 import io.netty.channel.Channel;
@@ -546,7 +547,7 @@ public class EmbeddedChannel extends AbstractChannel {
         runPendingTasks();
         if (cancel) {
             // Cancel all scheduled tasks that are left.
-            loop.cancelScheduledTasks();
+            embeddedEventLoop().cancelScheduledTasks();
         }
     }
 
@@ -593,16 +594,28 @@ public class EmbeddedChannel extends AbstractChannel {
      */
     public void runPendingTasks() {
         try {
-            loop.runTasks();
+            embeddedEventLoop().runTasks();
         } catch (Exception e) {
             recordException(e);
         }
 
         try {
-            loop.runScheduledTasks();
+            embeddedEventLoop().runScheduledTasks();
         } catch (Exception e) {
             recordException(e);
         }
+    }
+
+    /**
+     * Check whether this channel has any pending tasks that would be executed by a call to {@link #runPendingTasks()}.
+     * This includes normal tasks, and scheduled tasks where the deadline has expired. If this method returns
+     * {@code false}, a call to {@link #runPendingTasks()} would do nothing.
+     *
+     * @return {@code true} if there are any pending tasks, {@code false} otherwise.
+     */
+    public boolean hasPendingTasks() {
+        return embeddedEventLoop().hasPendingNormalTasks() ||
+                embeddedEventLoop().nextScheduledTask() == 0;
     }
 
     /**
@@ -612,10 +625,10 @@ public class EmbeddedChannel extends AbstractChannel {
      */
     public long runScheduledPendingTasks() {
         try {
-            return loop.runScheduledTasks();
+            return embeddedEventLoop().runScheduledTasks();
         } catch (Exception e) {
             recordException(e);
-            return loop.nextScheduledTask();
+            return embeddedEventLoop().nextScheduledTask();
         }
     }
 
@@ -633,6 +646,34 @@ public class EmbeddedChannel extends AbstractChannel {
                     "More than one exception was raised. " +
                             "Will report only the first one and log others.", cause);
         }
+    }
+
+    /**
+     * Advance the clock of the event loop of this channel by the given duration. Any scheduled tasks will execute
+     * sooner by the given time (but {@link #runScheduledPendingTasks()} still needs to be called).
+     */
+    public void advanceTimeBy(long duration, TimeUnit unit) {
+        embeddedEventLoop().advanceTimeBy(unit.toNanos(duration));
+    }
+
+    /**
+     * Freeze the clock of this channel's event loop. Any scheduled tasks that are not already due will not run on
+     * future {@link #runScheduledPendingTasks()} calls. While the event loop is frozen, it is still possible to
+     * {@link #advanceTimeBy(long, TimeUnit) advance time} manually so that scheduled tasks execute.
+     */
+    public void freezeTime() {
+        embeddedEventLoop().freezeTime();
+    }
+
+    /**
+     * Unfreeze an event loop that was {@link #freezeTime() frozen}. Time will continue at the point where
+     * {@link #freezeTime()} stopped it: if a task was scheduled ten minutes in the future and {@link #freezeTime()}
+     * was called, it will run ten minutes after this method is called again (assuming no
+     * {@link #advanceTimeBy(long, TimeUnit)} calls, and assuming pending scheduled tasks are run at that time using
+     * {@link #runScheduledPendingTasks()}).
+     */
+    public void unfreezeTime() {
+        embeddedEventLoop().unfreezeTime();
     }
 
     /**
@@ -673,6 +714,14 @@ public class EmbeddedChannel extends AbstractChannel {
       }
 
       return true;
+    }
+
+    private EmbeddedEventLoop embeddedEventLoop() {
+        if (isRegistered()) {
+            return (EmbeddedEventLoop) super.eventLoop();
+        }
+
+        return loop;
     }
 
     /**

@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -30,6 +30,7 @@ import java.util.BitSet;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The internal data structure that stores the thread-local variables for Netty and all {@link FastThreadLocal}s.
@@ -39,14 +40,45 @@ import java.util.WeakHashMap;
 public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap {
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(InternalThreadLocalMap.class);
+    private static final ThreadLocal<InternalThreadLocalMap> slowThreadLocalMap =
+            new ThreadLocal<InternalThreadLocalMap>();
+    private static final AtomicInteger nextIndex = new AtomicInteger();
 
     private static final int DEFAULT_ARRAY_LIST_INITIAL_CAPACITY = 8;
+    private static final int ARRAY_LIST_CAPACITY_EXPAND_THRESHOLD = 1 << 30;
+    // Reference: https://hg.openjdk.java.net/jdk8/jdk8/jdk/file/tip/src/share/classes/java/util/ArrayList.java#l229
+    private static final int ARRAY_LIST_CAPACITY_MAX_SIZE = Integer.MAX_VALUE - 8;
     private static final int STRING_BUILDER_INITIAL_SIZE;
     private static final int STRING_BUILDER_MAX_SIZE;
+    private static final int HANDLER_SHARABLE_CACHE_INITIAL_CAPACITY = 4;
+    private static final int INDEXED_VARIABLE_TABLE_INITIAL_SIZE = 32;
 
     public static final Object UNSET = new Object();
 
+    /** Used by {@link FastThreadLocal} */
+    private Object[] indexedVariables;
+
+    // Core thread-locals
+    private int futureListenerStackDepth;
+    private int localChannelReaderStackDepth;
+    private Map<Class<?>, Boolean> handlerSharableCache;
+    private IntegerHolder counterHashCode;
+    private ThreadLocalRandom random;
+    private Map<Class<?>, TypeParameterMatcher> typeParameterMatcherGetCache;
+    private Map<Class<?>, Map<String, TypeParameterMatcher>> typeParameterMatcherFindCache;
+
+    // String-related thread-locals
+    private StringBuilder stringBuilder;
+    private Map<Charset, CharsetEncoder> charsetEncoderCache;
+    private Map<Charset, CharsetDecoder> charsetDecoderCache;
+
+    // ArrayList-related thread-locals
+    private ArrayList<Object> arrayList;
+
     private BitSet cleanerFlags;
+
+    /** @deprecated These padding fields will be removed in the future. */
+    public long rp1, rp2, rp3, rp4, rp5, rp6, rp7, rp8;
 
     static {
         STRING_BUILDER_INITIAL_SIZE =
@@ -83,7 +115,6 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
     }
 
     private static InternalThreadLocalMap slowGet() {
-        ThreadLocal<InternalThreadLocalMap> slowThreadLocalMap = UnpaddedInternalThreadLocalMap.slowThreadLocalMap;
         InternalThreadLocalMap ret = slowThreadLocalMap.get();
         if (ret == null) {
             ret = new InternalThreadLocalMap();
@@ -107,8 +138,8 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
 
     public static int nextVariableIndex() {
         int index = nextIndex.getAndIncrement();
-        if (index < 0) {
-            nextIndex.decrementAndGet();
+        if (index >= ARRAY_LIST_CAPACITY_MAX_SIZE || index < 0) {
+            nextIndex.set(ARRAY_LIST_CAPACITY_MAX_SIZE);
             throw new IllegalStateException("too many thread-local indexed variables");
         }
         return index;
@@ -118,16 +149,12 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
         return nextIndex.get() - 1;
     }
 
-    // Cache line padding (must be public)
-    // With CompressedOops enabled, an instance of this class should occupy at least 128 bytes.
-    public long rp1, rp2, rp3, rp4, rp5, rp6, rp7, rp8, rp9;
-
     private InternalThreadLocalMap() {
-        super(newIndexedVariableTable());
+        indexedVariables = newIndexedVariableTable();
     }
 
     private static Object[] newIndexedVariableTable() {
-        Object[] array = new Object[32];
+        Object[] array = new Object[INDEXED_VARIABLE_TABLE_INITIAL_SIZE];
         Arrays.fill(array, UNSET);
         return array;
     }
@@ -271,7 +298,7 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
         Map<Class<?>, Boolean> cache = handlerSharableCache;
         if (cache == null) {
             // Start with small capacity to keep memory overhead as low as possible.
-            handlerSharableCache = cache = new WeakHashMap<Class<?>, Boolean>(4);
+            handlerSharableCache = cache = new WeakHashMap<Class<?>, Boolean>(HANDLER_SHARABLE_CACHE_INITIAL_CAPACITY);
         }
         return cache;
     }
@@ -307,13 +334,18 @@ public final class InternalThreadLocalMap extends UnpaddedInternalThreadLocalMap
     private void expandIndexedVariableTableAndSet(int index, Object value) {
         Object[] oldArray = indexedVariables;
         final int oldCapacity = oldArray.length;
-        int newCapacity = index;
-        newCapacity |= newCapacity >>>  1;
-        newCapacity |= newCapacity >>>  2;
-        newCapacity |= newCapacity >>>  4;
-        newCapacity |= newCapacity >>>  8;
-        newCapacity |= newCapacity >>> 16;
-        newCapacity ++;
+        int newCapacity;
+        if (index < ARRAY_LIST_CAPACITY_EXPAND_THRESHOLD) {
+            newCapacity = index;
+            newCapacity |= newCapacity >>>  1;
+            newCapacity |= newCapacity >>>  2;
+            newCapacity |= newCapacity >>>  4;
+            newCapacity |= newCapacity >>>  8;
+            newCapacity |= newCapacity >>> 16;
+            newCapacity ++;
+        } else {
+            newCapacity = ARRAY_LIST_CAPACITY_MAX_SIZE;
+        }
 
         Object[] newArray = Arrays.copyOf(oldArray, newCapacity);
         Arrays.fill(newArray, oldCapacity, newArray.length, UNSET);

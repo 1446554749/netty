@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -15,17 +15,19 @@
  */
 package io.netty.handler.ssl;
 
+import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import io.netty.util.ReferenceCountUtil;
-import org.junit.Test;
+import org.junit.jupiter.api.function.Executable;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import javax.net.ssl.SSLEngine;
 
-public class ReferenceCountedOpenSslEngineTest extends OpenSslEngineTest {
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
-    public ReferenceCountedOpenSslEngineTest(BufferType type, ProtocolCipherCombo combo, boolean delegate) {
-        super(type, combo, delegate);
-    }
+public class ReferenceCountedOpenSslEngineTest extends OpenSslEngineTest {
 
     @Override
     protected SslProvider sslClientProvider() {
@@ -44,7 +46,7 @@ public class ReferenceCountedOpenSslEngineTest extends OpenSslEngineTest {
 
     @Override
     protected void cleanupClientSslEngine(SSLEngine engine) {
-        ReferenceCountUtil.release(engine);
+        ReferenceCountUtil.release(unwrapEngine(engine));
     }
 
     @Override
@@ -54,18 +56,57 @@ public class ReferenceCountedOpenSslEngineTest extends OpenSslEngineTest {
 
     @Override
     protected void cleanupServerSslEngine(SSLEngine engine) {
-        ReferenceCountUtil.release(engine);
+        ReferenceCountUtil.release(unwrapEngine(engine));
     }
 
-    @Test(expected = NullPointerException.class)
-    public void testNotLeakOnException() throws Exception {
-        clientSslCtx = SslContextBuilder.forClient()
+    @MethodSource("newTestParams")
+    @ParameterizedTest
+    public void testNotLeakOnException(SSLEngineTestParam param) throws Exception {
+        clientSslCtx = wrapContext(param, SslContextBuilder.forClient()
                                         .trustManager(InsecureTrustManagerFactory.INSTANCE)
                                         .sslProvider(sslClientProvider())
-                                        .protocols(protocols())
-                                        .ciphers(ciphers())
-                                        .build();
+                                        .protocols(param.protocols())
+                                        .ciphers(param.ciphers())
+                                        .build());
 
-        clientSslCtx.newEngine(null);
+        assertThrows(NullPointerException.class, new Executable() {
+            @Override
+            public void execute() throws Throwable {
+                clientSslCtx.newEngine(null);
+            }
+        });
+    }
+
+    @SuppressWarnings("deprecation")
+    @Override
+    protected SslContext wrapContext(SSLEngineTestParam param, SslContext context) {
+        if (context instanceof ReferenceCountedOpenSslContext) {
+            if (param instanceof OpenSslEngineTestParam) {
+                ((ReferenceCountedOpenSslContext) context).setUseTasks(((OpenSslEngineTestParam) param).useTasks);
+            }
+            // Explicit enable the session cache as its disabled by default on the client side.
+            ((ReferenceCountedOpenSslContext) context).sessionContext().setSessionCacheEnabled(true);
+        }
+        return context;
+    }
+
+    @MethodSource("newTestParams")
+    @ParameterizedTest
+    public void parentContextIsRetainedByChildEngines(SSLEngineTestParam param) throws Exception {
+        SslContext clientSslCtx = wrapContext(param, SslContextBuilder.forClient()
+            .trustManager(InsecureTrustManagerFactory.INSTANCE)
+            .sslProvider(sslClientProvider())
+            .protocols(param.protocols())
+            .ciphers(param.ciphers())
+            .build());
+
+        SSLEngine engine = clientSslCtx.newEngine(UnpooledByteBufAllocator.DEFAULT);
+        assertEquals(ReferenceCountUtil.refCnt(clientSslCtx), 2);
+
+        cleanupClientSslContext(clientSslCtx);
+        assertEquals(ReferenceCountUtil.refCnt(clientSslCtx), 1);
+
+        cleanupClientSslEngine(engine);
+        assertEquals(ReferenceCountUtil.refCnt(clientSslCtx), 0);
     }
 }

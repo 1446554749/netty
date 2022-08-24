@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -15,13 +15,17 @@
  */
 package io.netty.util.internal;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 
 import java.util.Arrays;
 import java.util.Collections;
 
 import static io.netty.util.internal.StringUtil.NEWLINE;
 import static io.netty.util.internal.StringUtil.commonSuffixOfLength;
+import static io.netty.util.internal.StringUtil.indexOfWhiteSpace;
+import static io.netty.util.internal.StringUtil.indexOfNonWhiteSpace;
+import static io.netty.util.internal.StringUtil.isNullOrEmpty;
 import static io.netty.util.internal.StringUtil.simpleClassName;
 import static io.netty.util.internal.StringUtil.substringAfter;
 import static io.netty.util.internal.StringUtil.toHexString;
@@ -29,13 +33,14 @@ import static io.netty.util.internal.StringUtil.toHexStringPadded;
 import static io.netty.util.internal.StringUtil.unescapeCsv;
 import static io.netty.util.internal.StringUtil.unescapeCsvFields;
 import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class StringUtilTest {
 
@@ -157,23 +162,26 @@ public class StringUtilTest {
         return sp;
     }
 
-    @Test (expected = NullPointerException.class)
+    @Test
     public void escapeCsvNull() {
-        StringUtil.escapeCsv(null);
+        assertThrows(NullPointerException.class, new Executable() {
+            @Override
+            public void execute() {
+                StringUtil.escapeCsv(null);
+            }
+        });
     }
 
     @Test
     public void escapeCsvEmpty() {
         CharSequence value = "";
-        CharSequence expected = value;
-        escapeCsv(value, expected);
+        escapeCsv(value, value);
     }
 
     @Test
     public void escapeCsvUnquoted() {
         CharSequence value = "something";
-        CharSequence expected = value;
-        escapeCsv(value, expected);
+        escapeCsv(value, value);
     }
 
     @Test
@@ -249,8 +257,7 @@ public class StringUtilTest {
     @Test
     public void escapeCsvQuoted() {
         CharSequence value = "\"foo,goo\"";
-        CharSequence expected = value;
-        escapeCsv(value, expected);
+        escapeCsv(value, value);
     }
 
     @Test
@@ -404,29 +411,54 @@ public class StringUtilTest {
         assertEquals("hello,netty", unescapeCsv("\"hello,netty\""));
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void unescapeCsvWithSingleQuote() {
-        unescapeCsv("\"");
+        assertThrows(IllegalArgumentException.class, new Executable() {
+            @Override
+            public void execute() {
+                unescapeCsv("\"");
+            }
+        });
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void unescapeCsvWithOddQuote() {
-        unescapeCsv("\"\"\"");
+        assertThrows(IllegalArgumentException.class, new Executable() {
+            @Override
+            public void execute() {
+                unescapeCsv("\"\"\"");
+            }
+        });
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void unescapeCsvWithCRAndWithoutQuote() {
-        unescapeCsv("\r");
+        assertThrows(IllegalArgumentException.class, new Executable() {
+            @Override
+            public void execute() {
+                unescapeCsv("\r");
+            }
+        });
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void unescapeCsvWithLFAndWithoutQuote() {
-        unescapeCsv("\n");
+        assertThrows(IllegalArgumentException.class, new Executable() {
+            @Override
+            public void execute() {
+                unescapeCsv("\n");
+            }
+        });
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void unescapeCsvWithCommaAndWithoutQuote() {
-        unescapeCsv(",");
+        assertThrows(IllegalArgumentException.class, new Executable() {
+            @Override
+            public void execute() {
+                unescapeCsv(",");
+            }
+        });
     }
 
     @Test
@@ -461,29 +493,54 @@ public class StringUtilTest {
         assertEquals(Arrays.asList("a\rb", "c\nd"), unescapeCsvFields("\"a\rb\",\"c\nd\""));
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void unescapeCsvFieldsWithCRWithoutQuote() {
-        unescapeCsvFields("a,\r");
+        assertThrows(IllegalArgumentException.class, new Executable() {
+            @Override
+            public void execute() {
+                unescapeCsvFields("a,\r");
+            }
+        });
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void unescapeCsvFieldsWithLFWithoutQuote() {
-        unescapeCsvFields("a,\r");
+        assertThrows(IllegalArgumentException.class, new Executable() {
+            @Override
+            public void execute() {
+                unescapeCsvFields("a,\r");
+            }
+        });
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void unescapeCsvFieldsWithQuote() {
-        unescapeCsvFields("a,\"");
+        assertThrows(IllegalArgumentException.class, new Executable() {
+            @Override
+            public void execute() {
+                unescapeCsvFields("a,\"");
+            }
+        });
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void unescapeCsvFieldsWithQuote2() {
-        unescapeCsvFields("\",a");
+        assertThrows(IllegalArgumentException.class, new Executable() {
+            @Override
+            public void execute() {
+                unescapeCsvFields("\",a");
+            }
+        });
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void unescapeCsvFieldsWithQuote3() {
-        unescapeCsvFields("a\"b,a");
+        assertThrows(IllegalArgumentException.class, new Executable() {
+            @Override
+            public void execute() {
+                unescapeCsvFields("a\"b,a");
+            }
+        });
     }
 
     @Test
@@ -533,5 +590,59 @@ public class StringUtilTest {
         assertSame("a\t b", StringUtil.trimOws("a\t b"));
         assertEquals("", StringUtil.trimOws("\t ").toString());
         assertEquals("a b", StringUtil.trimOws("\ta b \t").toString());
+    }
+
+    @Test
+    public void testJoin() {
+        assertEquals("",
+                     StringUtil.join(",", Collections.<CharSequence>emptyList()).toString());
+        assertEquals("a",
+                     StringUtil.join(",", Collections.singletonList("a")).toString());
+        assertEquals("a,b",
+                     StringUtil.join(",", Arrays.asList("a", "b")).toString());
+        assertEquals("a,b,c",
+                     StringUtil.join(",", Arrays.asList("a", "b", "c")).toString());
+        assertEquals("a,b,c,null,d",
+                     StringUtil.join(",", Arrays.asList("a", "b", "c", null, "d")).toString());
+    }
+
+    @Test
+    public void testIsNullOrEmpty() {
+        assertTrue(isNullOrEmpty(null));
+        assertTrue(isNullOrEmpty(""));
+        assertTrue(isNullOrEmpty(StringUtil.EMPTY_STRING));
+        assertFalse(isNullOrEmpty(" "));
+        assertFalse(isNullOrEmpty("\t"));
+        assertFalse(isNullOrEmpty("\n"));
+        assertFalse(isNullOrEmpty("foo"));
+        assertFalse(isNullOrEmpty(NEWLINE));
+    }
+
+    @Test
+    public void testIndexOfWhiteSpace() {
+        assertEquals(-1, indexOfWhiteSpace("", 0));
+        assertEquals(0, indexOfWhiteSpace(" ", 0));
+        assertEquals(-1, indexOfWhiteSpace(" ", 1));
+        assertEquals(0, indexOfWhiteSpace("\n", 0));
+        assertEquals(-1, indexOfWhiteSpace("\n", 1));
+        assertEquals(0, indexOfWhiteSpace("\t", 0));
+        assertEquals(-1, indexOfWhiteSpace("\t", 1));
+        assertEquals(3, indexOfWhiteSpace("foo\r\nbar", 1));
+        assertEquals(-1, indexOfWhiteSpace("foo\r\nbar", 10));
+        assertEquals(7, indexOfWhiteSpace("foo\tbar\r\n", 6));
+        assertEquals(-1, indexOfWhiteSpace("foo\tbar\r\n", Integer.MAX_VALUE));
+    }
+
+    @Test
+    public void testIndexOfNonWhiteSpace() {
+        assertEquals(-1, indexOfNonWhiteSpace("", 0));
+        assertEquals(-1, indexOfNonWhiteSpace(" ", 0));
+        assertEquals(-1, indexOfNonWhiteSpace(" \t", 0));
+        assertEquals(-1, indexOfNonWhiteSpace(" \t\r\n", 0));
+        assertEquals(2, indexOfNonWhiteSpace(" \tfoo\r\n", 0));
+        assertEquals(2, indexOfNonWhiteSpace(" \tfoo\r\n", 1));
+        assertEquals(4, indexOfNonWhiteSpace(" \tfoo\r\n", 4));
+        assertEquals(-1, indexOfNonWhiteSpace(" \tfoo\r\n", 10));
+        assertEquals(-1, indexOfNonWhiteSpace(" \tfoo\r\n", Integer.MAX_VALUE));
     }
 }

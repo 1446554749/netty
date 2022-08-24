@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -20,6 +20,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ReplayingDecoder;
 import io.netty.handler.codec.socks.SocksCmdResponseDecoder.State;
 import io.netty.util.NetUtil;
+import io.netty.util.internal.UnstableApi;
 
 import java.util.List;
 
@@ -92,7 +93,8 @@ public class SocksCmdResponseDecoder extends ReplayingDecoder<State> {
         ctx.pipeline().remove(this);
     }
 
-    enum State {
+    @UnstableApi
+    public enum State {
         CHECK_PROTOCOL_VERSION,
         READ_CMD_HEADER,
         READ_CMD_ADDRESS

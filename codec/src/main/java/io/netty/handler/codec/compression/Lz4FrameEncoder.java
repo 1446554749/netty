@@ -5,7 +5,7 @@
  * version 2.0 (the "License"); you may not use this file except in compliance
  * with the License. You may obtain a copy of the License at:
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *   https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -23,10 +23,10 @@ import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.ChannelPromise;
-import io.netty.channel.ChannelPromiseNotifier;
 import io.netty.handler.codec.EncoderException;
 import io.netty.handler.codec.MessageToByteEncoder;
 import io.netty.util.concurrent.EventExecutor;
+import io.netty.util.concurrent.PromiseNotifier;
 import io.netty.util.internal.ObjectUtil;
 import net.jpountz.lz4.LZ4Compressor;
 import net.jpountz.lz4.LZ4Exception;
@@ -49,12 +49,13 @@ import static io.netty.handler.codec.compression.Lz4Constants.MAGIC_NUMBER;
 import static io.netty.handler.codec.compression.Lz4Constants.MAX_BLOCK_SIZE;
 import static io.netty.handler.codec.compression.Lz4Constants.MIN_BLOCK_SIZE;
 import static io.netty.handler.codec.compression.Lz4Constants.TOKEN_OFFSET;
+import static io.netty.handler.codec.compression.Lz4Constants.THREAD_POOL_DELAY_SECONDS;
 
 /**
  * Compresses a {@link ByteBuf} using the LZ4 format.
  *
  * See original <a href="https://github.com/Cyan4973/lz4">LZ4 Github project</a>
- * and <a href="http://fastcompression.blogspot.ru/2011/05/lz4-explained.html">LZ4 block format</a>
+ * and <a href="https://fastcompression.blogspot.ru/2011/05/lz4-explained.html">LZ4 block format</a>
  * for full description.
  *
  * Since the original LZ4 block format does not contains size of compressed block and size of original data
@@ -158,12 +159,8 @@ public class Lz4FrameEncoder extends MessageToByteEncoder<ByteBuf> {
          */
     public Lz4FrameEncoder(LZ4Factory factory, boolean highCompressor, int blockSize,
                            Checksum checksum, int maxEncodeSize) {
-        if (factory == null) {
-            throw new NullPointerException("factory");
-        }
-        if (checksum == null) {
-            throw new NullPointerException("checksum");
-        }
+        ObjectUtil.checkNotNull(factory, "factory");
+        ObjectUtil.checkNotNull(checksum, "checksum");
 
         compressor = highCompressor ? factory.highCompressor() : factory.fastCompressor();
         this.checksum = ByteBufChecksum.wrapChecksum(checksum);
@@ -284,7 +281,7 @@ public class Lz4FrameEncoder extends MessageToByteEncoder<ByteBuf> {
         if (compressedLength >= flushableBytes) {
             blockType = BLOCK_TYPE_NON_COMPRESSED;
             compressedLength = flushableBytes;
-            out.setBytes(idx + HEADER_LENGTH, buffer, 0, flushableBytes);
+            out.setBytes(idx + HEADER_LENGTH, buffer, buffer.readerIndex(), flushableBytes);
         } else {
             blockType = BLOCK_TYPE_COMPRESSED;
         }
@@ -319,6 +316,7 @@ public class Lz4FrameEncoder extends MessageToByteEncoder<ByteBuf> {
                 compressor.maxCompressedLength(buffer.readableBytes()) + HEADER_LENGTH);
         flushBufferedData(footer);
 
+        footer.ensureWritable(HEADER_LENGTH);
         final int idx = footer.writerIndex();
         footer.setLong(idx, MAGIC_NUMBER);
         footer.setByte(idx + TOKEN_OFFSET, (byte) (BLOCK_TYPE_NON_COMPRESSED | compressionLevel));
@@ -362,7 +360,7 @@ public class Lz4FrameEncoder extends MessageToByteEncoder<ByteBuf> {
                 @Override
                 public void run() {
                     ChannelFuture f = finishEncode(ctx(), promise);
-                    f.addListener(new ChannelPromiseNotifier(promise));
+                    PromiseNotifier.cascade(f, promise);
                 }
             });
             return promise;
@@ -386,7 +384,7 @@ public class Lz4FrameEncoder extends MessageToByteEncoder<ByteBuf> {
                 public void run() {
                     ctx.close(promise);
                 }
-            }, 10, TimeUnit.SECONDS); // FIXME: Magic number
+            }, THREAD_POOL_DELAY_SECONDS, TimeUnit.SECONDS);
         }
     }
 
