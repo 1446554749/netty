@@ -157,6 +157,7 @@ public interface ChannelHandlerContext extends AttributeMap, ChannelInboundInvok
 
     /**
      * Return the assigned {@link ByteBufAllocator} which will be used to allocate {@link ByteBuf}s.
+     * 返回用户引导启动类配置的allocator，这个allocator可能不是DEFAULT
      */
     ByteBufAllocator alloc();
 
